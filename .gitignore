@@ -1,0 +1,24 @@
+# Gradle / build
+.gradle/
+build/
+app/build/
+captures/
+*.apk
+*.aab
+
+# 本机路径（含 SDK 位置，不应提交）
+local.properties
+
+# 签名密钥——绝不入库
+*.jks
+*.keystore
+keystore.properties
+
+# IDE
+.idea/
+*.iml
+.DS_Store
+
+# 令牌/密钥
+.env
+.github_token*
