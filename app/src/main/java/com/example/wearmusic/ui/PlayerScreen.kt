@@ -7,6 +7,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -22,10 +23,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
-import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
@@ -38,6 +37,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -52,6 +52,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.rotary.onRotaryScrollEvent
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -76,16 +77,17 @@ private val ACCENT = Color(0xFF34C7F4)
 private val CTRL_BG = Color(0xFF2A2A35) // 上一首/下一首背景色：比画布稍亮，保证可见
 
 /**
- * 手表播放器页（按表盘直径等比缩放，手机大圆/真手表小圆都填满）：
- *  - 背景：当前专辑封面 + 高斯模糊 + 暗色遮罩
- *  - 边缘整圈进度环：从 12 点起顺时针，已播=亮蓝 / 未播=极淡白
+ * 手表播放器页（纯圆形表盘，内容约束在安全圆内）：
+ *  - 背景：当前专辑封面（铺满全屏 + 高斯模糊 + 暗色遮罩）——专辑封面即背景
+ *  - 安全圆：所有 UI 都收在「屏幕短边内缩一圈边距」的正圆内，既不超出圆形、也不贴边
+ *  - 边缘进度环：内缩在安全圆里，从 12 点起顺时针，已播=亮蓝 / 未播=极淡白
  *  - 顶部系统时间由 AppScaffold 的 TimeText 提供
- *  - 中央：圆形专辑封面 + 曲名 + 歌手
- *  - 主控三键：⏮ ⏯ ⏭
- *  - 底部一行小键：收藏 / 列表 / 模式 / 专辑
+ *  - 屏幕中段：主控三键 ⏮ ⏯ ⏭ + 进度时间（整体上移，落在安全圆内）
+ *  - 下半部分：收藏 / 列表 / 模式（上移并留底边缓冲，不超出、不贴边）
+ *  - 上滑屏幕（或点「选专辑」提示）唤起专辑选取（Cover Flow）；点专辑直接播放
+ *  - 左滑屏幕：切换到歌词页
  *
- * 关键：所有尺寸都按「表盘宽度 w 的比例」计算并 clamp 上下限，
- * 这样在手机上被圆形外框放大成大圆时，内容同步放大填满，不再缩在中间一团。
+ * 关键：所有尺寸都按「安全圆直径 d 的比例」计算并 clamp 上下限，整体落在安全圆内。
  */
 @Composable
 fun WearPlayerScreen(
@@ -114,6 +116,10 @@ fun WearPlayerScreen(
         try { focusRequester.requestFocus() } catch (_: Throwable) {}
     }
 
+    // 上滑手势累积位移（向上为负），超过阈值即唤起专辑选取
+    var swipeAcc by remember { mutableFloatStateOf(0f) }
+    val density = LocalDensity.current
+
     val isFavorite = current != null && favorites.contains(current.id)
 
     var modeHint by remember { mutableStateOf<String?>(null) }
@@ -133,15 +139,24 @@ fun WearPlayerScreen(
             .onRotaryScrollEvent { event ->
                 vm.setVolume((volume + event.verticalScrollPixels * 0.0015f).coerceIn(0f, 1f))
                 true
+            }
+            .pointerInput(Unit) {
+                detectVerticalDragGestures(
+                    onDragStart = { swipeAcc = 0f },
+                    onDragEnd = {
+                        val threshold = with(density) { 70.dp.toPx() }
+                        if (swipeAcc <= -threshold) onOpenAlbumFlow()
+                    },
+                ) { _, dragAmount -> swipeAcc += dragAmount }
             },
     ) {
-        // 1) 背景层：当前曲目专辑封面 + 模糊 + 暗化
+        // 1) 背景层：当前曲目专辑封面铺满全屏 + 模糊 + 暗化（专辑封面即背景）
         AsyncImage(
             model = current?.albumArtUri,
             contentDescription = null,
             modifier = Modifier
                 .fillMaxSize()
-                .then(blurModifier(28f)),
+                .then(blurModifier(30f)),
             contentScale = ContentScale.Crop,
         )
         Box(
@@ -157,186 +172,192 @@ fun WearPlayerScreen(
                 ),
         )
 
-        // 2) 边缘整圈进度环（Wear 标志性元素）
-        CircularProgressIndicator(
-            progress = { animatedProgress },
-            modifier = Modifier.fillMaxSize(),
-            startAngle = -90f,
-            endAngle = 270f,
-            colors = ProgressIndicatorDefaults.colors(
-                indicatorColor = ACCENT,
-                trackColor = Color(0x22FFFFFF),
-            ),
-            strokeWidth = 4.dp,
-            gapSize = 0.dp,
-        )
-
-        // 3) 按表盘直径等比缩放的内容
+        // 2) 安全圆：在圆形表盘内再留一圈边距，所有 UI 都不超出、不贴边
         BoxWithConstraints(
             modifier = Modifier.fillMaxSize(),
         ) {
             val w = maxWidth
             val h = maxHeight
+            // 安全圆直径：屏幕短边再内缩 edge，作为所有内容的边界
+            val edge: Dp = (minOf(w, h) * 0.07f).coerceIn(10.dp, 20.dp)
+            val d: Dp = minOf(w, h) - edge * 2f
 
-            // —— 等比尺寸（按表盘宽 w 的比例，带 min/max 钳制）——
-            val albumSize: Dp = (w * 0.40f).coerceIn(64.dp, 140.dp)
-            val playSize: Dp = (w * 0.20f).coerceIn(44.dp, 72.dp)
+            // —— 等比尺寸改为按安全圆直径 d 计算（带 min/max 钳制）——
+            val playSize: Dp = (d * 0.22f).coerceIn(46.dp, 70.dp)
             val sideSize: Dp = (playSize * 0.74f)
-            val bIconSize: Dp = (w * 0.055f).coerceIn(20.dp, 30.dp)
+            val bIconSize: Dp = (d * 0.060f).coerceIn(20.dp, 30.dp)
             val bIconInner: Dp = (bIconSize * 0.72f)
-            val titleSp = (w.value * 0.033f).coerceIn(12f, 16f).sp
-            val artistSp = (w.value * 0.025f).coerceIn(10f, 13f).sp
-            val timeSp = (w.value * 0.023f).coerceIn(9f, 12f).sp
-            val horizPad: Dp = (w * 0.09f).coerceIn(10.dp, 40.dp)
-            val topPad: Dp = (h * 0.04f).coerceIn(14.dp, 26.dp) // 给 TimeText 让位
-            val smallGap: Dp = (h * 0.018f).coerceIn(4.dp, 12.dp)
-            val ctrlGap: Dp = (w * 0.05f).coerceIn(10.dp, 28.dp)
+            val titleSp = (d.value * 0.034f).coerceIn(12f, 16f).sp
+            val artistSp = (d.value * 0.026f).coerceIn(10f, 13f).sp
+            val timeSp = (d.value * 0.024f).coerceIn(9f, 12f).sp
+            val horizPad: Dp = (d * 0.10f).coerceIn(10.dp, 36.dp)
+            val topPad: Dp = (d * 0.05f).coerceIn(14.dp, 24.dp) // 给 12 点 TimeText 让位
+            val smallGap: Dp = (d * 0.02f).coerceIn(4.dp, 10.dp)
+            val ctrlGap: Dp = (d * 0.05f).coerceIn(10.dp, 26.dp)
 
-            Column(
-                modifier = Modifier.fillMaxSize(),
-                horizontalAlignment = Alignment.CenterHorizontally,
+            // 居中安全圆：承载进度环与内容
+            Box(
+                modifier = Modifier
+                    .size(d)
+                    .align(Alignment.Center),
             ) {
-                // 顶部留白：给 AppScaffold 的 TimeText（12 点）让位
-                Spacer(Modifier.size(topPad))
-
-                // —— 主内容簇：贴顶排布，整体偏上 ——
-                // 圆形专辑封面
-                Box(
+                // 进度环内缩，避免贴着圆形屏幕边（Wear 标志性元素）
+                CircularProgressIndicator(
+                    progress = { animatedProgress },
                     modifier = Modifier
-                        .size(albumSize)
-                        .clip(CircleShape)
-                        .background(Color(0xFF101015))
+                        .fillMaxSize()
+                        .padding(8.dp),
+                    startAngle = -90f,
+                    endAngle = 270f,
+                    colors = ProgressIndicatorDefaults.colors(
+                        indicatorColor = ACCENT,
+                        trackColor = Color(0x22FFFFFF),
+                    ),
+                    strokeWidth = 4.dp,
+                    gapSize = 0.dp,
+                )
+
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    if (current?.albumArtUri != null) {
-                        AsyncImage(
-                            model = current.albumArtUri,
-                            contentDescription = null,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .clip(CircleShape),
-                            contentScale = ContentScale.Crop,
+                    // 顶部留白：给 AppScaffold 的 TimeText（12 点）让位
+                    Spacer(Modifier.size(topPad))
+
+                    // 标题 / 歌手（轻量，靠上）
+                    Text(
+                        text = current?.title ?: "未选择音乐",
+                        color = Color.White,
+                        fontSize = titleSp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        textAlign = TextAlign.Center,
+                    )
+                    Spacer(Modifier.size(smallGap * 0.4f))
+                    Text(
+                        text = current?.artist ?: "上滑选专辑 · 左滑看歌词",
+                        color = Color(0xFFA8A8BC),
+                        fontSize = artistSp,
+                        maxLines = 1,
+                        textAlign = TextAlign.Center,
+                    )
+
+                    // 弹性间距：把主控推到屏幕中段（并整体上移）
+                    Spacer(Modifier.weight(0.9f))
+
+                    // —— 屏幕中段：主控三键（切歌 + 暂停）——
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(ctrlGap),
+                    ) {
+                        PrevNextButton(
+                            isPrev = true,
+                            size = sideSize,
+                            onClickOnce = { vm.prev() },
+                            onSeekDelta = vm::seekBy,
                         )
-                    } else {
-                        Icon(
-                            Icons.Filled.MusicNote,
-                            contentDescription = null,
-                            tint = Color(0x5534C7F4),
-                            modifier = Modifier
-                                .align(Alignment.Center)
-                                .size(albumSize * 0.42f)
+                        PlayPauseButton(
+                            isPlaying = isPlaying,
+                            onToggle = vm::togglePlay,
+                            size = playSize,
+                        )
+                        PrevNextButton(
+                            isPrev = false,
+                            size = sideSize,
+                            onClickOnce = { vm.next() },
+                            onSeekDelta = vm::seekBy,
                         )
                     }
-                }
 
-                Spacer(Modifier.size(smallGap))
+                    Spacer(Modifier.size(smallGap))
 
-                Text(
-                    text = current?.title ?: "未选择音乐",
-                    color = Color.White,
-                    fontSize = titleSp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    textAlign = TextAlign.Center,
-                )
-                Spacer(Modifier.size(smallGap * 0.4f))
-                Text(
-                    text = current?.artist ?: "轻触底部选曲",
-                    color = Color(0xFFA8A8BC),
-                    fontSize = artistSp,
-                    maxLines = 1,
-                    textAlign = TextAlign.Center,
-                )
-
-                Spacer(Modifier.size(smallGap * 1.6f))
-
-                // 主控三键
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(ctrlGap),
-                ) {
-                    PrevNextButton(
-                        isPrev = true,
-                        size = sideSize,
-                        onClickOnce = { vm.prev() },
-                        onSeekDelta = vm::seekBy,
+                    Text(
+                        text = modeHint ?: "${formatMs(position)} / ${formatMs(duration)}",
+                        color = if (modeHint != null) ACCENT else Color(0xFF9090A4),
+                        fontSize = timeSp,
+                        fontWeight = if (modeHint != null) FontWeight.SemiBold else FontWeight.Normal,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
                     )
-                    PlayPauseButton(
-                        isPlaying = isPlaying,
-                        onToggle = vm::togglePlay,
-                        size = playSize,
-                    )
-                    PrevNextButton(
-                        isPrev = false,
-                        size = sideSize,
-                        onClickOnce = { vm.next() },
-                        onSeekDelta = vm::seekBy,
-                    )
-                }
 
-                Spacer(Modifier.size(smallGap))
+                    // 弹性间距：让底部按钮落在安全圆下半区、不贴边
+                    Spacer(Modifier.weight(1.0f))
 
-                Text(
-                    text = modeHint ?: "${formatMs(position)} / ${formatMs(duration)}",
-                    color = if (modeHint != null) ACCENT else Color(0xFF9090A4),
-                    fontSize = timeSp,
-                    fontWeight = if (modeHint != null) FontWeight.SemiBold else FontWeight.Normal,
-                    textAlign = TextAlign.Center,
-                    maxLines = 1,
-                )
+                    // 下半部分按钮（整体上移，落入安全圆内）
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = horizPad, end = horizPad),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center,
+                    ) {
+                        SmallIconAction(
+                            icon = if (isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                            tint = if (isFavorite) Color(0xFFFF5A7A) else Color(0xFFD5D5E0),
+                            size = bIconSize,
+                            inner = bIconInner,
+                            onClick = { if (current != null) vm.toggleFavorite(current.id) },
+                        )
+                        Spacer(Modifier.width(ctrlGap))
+                        SmallIconAction(
+                            icon = Icons.AutoMirrored.Filled.QueueMusic,
+                            tint = Color(0xFFD5D5E0),
+                            size = bIconSize,
+                            inner = bIconInner,
+                            onClick = onOpenTrackList,
+                        )
+                        Spacer(Modifier.width(ctrlGap))
+                        SmallIconAction(
+                            icon = when (playMode) {
+                                PlayMode.REPEAT_ONE -> Icons.Filled.RepeatOne
+                                PlayMode.SHUFFLE -> Icons.Filled.Shuffle
+                                PlayMode.SEQUENTIAL -> Icons.Filled.Repeat
+                            },
+                            tint = if (playMode == PlayMode.SEQUENTIAL) Color(0xFF7A7A8C) else ACCENT,
+                            size = bIconSize,
+                            inner = bIconInner,
+                            onClick = {
+                                val nextLabel = playMode.next().label
+                                vm.cyclePlayMode()
+                                modeHint = nextLabel
+                            },
+                        )
+                        Spacer(Modifier.width(ctrlGap))
+                        // 专辑选取：上滑屏幕出现（点此提示亦可）
+                        SwipeUpHint(onClick = onOpenAlbumFlow)
+                    }
 
-                // 弹性间距：把底栏推到表盘底部，主簇整体偏上
-                Spacer(Modifier.weight(1f))
-
-                // 底栏：收藏 / 列表 / 模式 / 专辑（永远在表盘底部安全区）
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = (topPad * 0.6f), start = horizPad, end = horizPad),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center,
-                ) {
-                    SmallIconAction(
-                        icon = if (isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
-                        tint = if (isFavorite) Color(0xFFFF5A7A) else Color(0xFFD5D5E0),
-                        size = bIconSize,
-                        inner = bIconInner,
-                        onClick = { if (current != null) vm.toggleFavorite(current.id) },
-                    )
-                    Spacer(Modifier.width(ctrlGap))
-                    SmallIconAction(
-                        icon = Icons.AutoMirrored.Filled.QueueMusic,
-                        tint = Color(0xFFD5D5E0),
-                        size = bIconSize,
-                        inner = bIconInner,
-                        onClick = onOpenTrackList,
-                    )
-                    Spacer(Modifier.width(ctrlGap))
-                    SmallIconAction(
-                        icon = when (playMode) {
-                            PlayMode.REPEAT_ONE -> Icons.Filled.RepeatOne
-                            PlayMode.SHUFFLE -> Icons.Filled.Shuffle
-                            PlayMode.SEQUENTIAL -> Icons.Filled.Repeat
-                        },
-                        tint = if (playMode == PlayMode.SEQUENTIAL) Color(0xFF7A7A8C) else ACCENT,
-                        size = bIconSize,
-                        inner = bIconInner,
-                        onClick = {
-                            val nextLabel = playMode.next().label
-                            vm.cyclePlayMode()
-                            modeHint = nextLabel
-                        },
-                    )
-                    Spacer(Modifier.width(ctrlGap))
-                    SmallIconAction(
-                        icon = Icons.Filled.Album,
-                        tint = Color(0xFFD5D5E0),
-                        size = bIconSize,
-                        inner = bIconInner,
-                        onClick = onOpenAlbumFlow,
-                    )
+                    // 底部缓冲：保证按钮不超出、不贴圆形边
+                    Spacer(Modifier.weight(0.45f))
                 }
             }
         }
+    }
+}
+
+/** 上滑选专辑提示（点按亦可唤起 Cover Flow） */
+@Composable
+private fun SwipeUpHint(onClick: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .clickable(onClick = onClick)
+            .padding(horizontal = 2.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text(
+            text = "︿",
+            color = Color(0xFFD5D5E0),
+            fontSize = 16.sp,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center,
+        )
+        Text(
+            text = "选专辑",
+            color = Color(0xFF9090A4),
+            fontSize = 9.sp,
+            textAlign = TextAlign.Center,
+        )
     }
 }
 

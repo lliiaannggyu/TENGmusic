@@ -12,10 +12,10 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
-    <!-- 手表特性设为「非必需」：UI 按圆形手表设计，但 APK 也允许在手机上安装/调试 -->
+    <!-- 纯手表应用：声明 watch 特性为必需，仅安装在 Wear OS 设备 -->
     <uses-feature
         android:name="android.hardware.type.watch"
-        android:required="false" />
+        android:required="true" />
 
     <application
         android:allowBackup="true"

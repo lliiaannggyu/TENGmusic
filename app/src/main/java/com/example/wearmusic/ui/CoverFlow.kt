@@ -2,27 +2,11 @@ package com.example.wearmusic.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.MusicNote
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
@@ -30,20 +14,18 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.foundation.focusable
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.rotary.onRotaryScrollEvent
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
-import androidx.wear.compose.foundation.lazy.items
-import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
-import androidx.wear.compose.material3.Button
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.IconButton
 import androidx.wear.compose.material3.Text
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Album
 import coil.compose.AsyncImage
 import com.example.wearmusic.Album
 import com.example.wearmusic.PlayerViewModel
@@ -51,6 +33,12 @@ import com.example.wearmusic.coverflow.CoverFlow
 import com.example.wearmusic.coverflow.CoverFlowParams
 import com.example.wearmusic.coverflow.CoverFlowState
 import com.example.wearmusic.coverflow.rememberCoverFlowState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 
 /**
  * 专辑选曲页（iPod Classic「Cover Flow」）—— 直接复用 GitHub 开源库 pakohan/compose-coverflow
@@ -59,8 +47,10 @@ import com.example.wearmusic.coverflow.rememberCoverFlowState
  * 该库提供：居中吸附、惯性滑动、3D 侧转(rotationY)、等比缩放、镜像倒影——即 iPod 的标准观感。
  * 这里只负责把「专辑」数据接入它，并加上：当前专辑名、点封面进曲目、手表表冠翻动。
  *
+ * 交互：轻触已居中的专辑封面 → 直接播放整张专辑（并关闭选曲）；轻触侧面封面 → 滚到正中。
+ *
  * @param sizeFraction 中间封面边长 = 容器短边 × 该比例（默认 0.5，即半屏宽，iPod 标准比例）
- * @param onBack 左上角返回：回到播放器（下滑手势之外的兜底入口）
+ * @param onBack 左上角返回 / 直接播放后关闭：回到播放器
  */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -71,7 +61,24 @@ fun AlbumCoverFlow(
     onBack: () -> Unit = {},
 ) {
     val albums by vm.albums.collectAsState()
-    var opened by remember { mutableStateOf<Album?>(null) }
+    var centeredIndex by remember { mutableStateOf(-1) }
+    val stateRef = remember { mutableStateOf<CoverFlowState?>(null) }
+
+    lateinit var state: CoverFlowState
+    state = rememberCoverFlowState(
+        onSelectHandler = { idx -> centeredIndex = idx },
+        onItemClick = { index ->
+            val s = stateRef.value
+            // 点「已居中」的封面 → 直接播放整张专辑并关闭选曲
+            if (s != null && index == centeredIndex) {
+                vm.playAlbum(albums[index])
+                onBack()
+            } else {
+                s?.scrollToItem(index)
+            }
+        }
+    )
+    stateRef.value = state
 
     Box(
         modifier = modifier.fillMaxSize().background(Color(0xFF06070A)),
@@ -89,20 +96,6 @@ fun AlbumCoverFlow(
 
         // 表冠（转动手表表冠翻动封面）；触摸滑动同样可用
         val focusRequester = remember { FocusRequester() }
-        val stateRef = remember { mutableStateOf<CoverFlowState?>(null) }
-        val centeredIndex = remember { mutableStateOf(-1) }
-        lateinit var state: com.example.wearmusic.coverflow.CoverFlowState
-        state = rememberCoverFlowState(
-            onSelectHandler = { idx -> centeredIndex.value = idx },
-            onItemClick = { index ->
-                val s = stateRef.value
-                // 点「已居中」的封面 → 打开曲目；点侧面封面 → 滚到正中
-                if (s != null && index == centeredIndex.value) opened = albums[index]
-                else s?.scrollToItem(index)
-            }
-        )
-        stateRef.value = state
-
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -134,12 +127,11 @@ fun AlbumCoverFlow(
             }
         }
 
-        if (opened != null) {
-            AlbumTracksSheet(album = opened!!, vm = vm, onClose = { opened = null })
-        }
-
-        // 底部居中：返回按钮 + 当前专辑名 / 歌手（圆形安全区内）
-        val current = albums.getOrNull(state.selectedIndex.coerceAtLeast(0))
+        // 底部居中：返回按钮 + 当前专辑名 / 歌手 + 轻触提示（圆形安全区内）
+        // 用可被 Compose 观察的 centeredIndex（而非 state.selectedIndex 普通字段），
+        // 保证「滚动到不同专辑时名字实时更新」
+        val sel = if (centeredIndex >= 0) centeredIndex else 0
+        val current = albums.getOrNull(sel)
         Column(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
@@ -163,7 +155,7 @@ fun AlbumCoverFlow(
                 modifier = Modifier.padding(horizontal = 16.dp)
             )
             Text(
-                text = "${current?.artist ?: ""} · ${current?.trackCount ?: 0} 首",
+                text = "${current?.artist ?: ""} · 轻触封面播放",
                 fontSize = 10.sp,
                 color = Color.Gray,
                 maxLines = 1
@@ -182,87 +174,20 @@ private fun AlbumArtContent(album: Album) {
             .background(Color(0xFF161616))
             .border(1.dp, Color(0x33FFFFFF), androidx.compose.foundation.shape.RoundedCornerShape(4.dp))
     ) {
+        // 兜底图标：加载成功会被封面遮住；加载失败（如无封面）则显示浅色专辑图标
+        Icon(
+            imageVector = Icons.Filled.Album,
+            contentDescription = null,
+            tint = Color(0x55FFFFFF),
+            modifier = Modifier
+                .size(48.dp)
+                .align(Alignment.Center),
+        )
         AsyncImage(
             model = album.albumArtUri,
             contentDescription = album.name,
             modifier = Modifier.fillMaxSize(),
-            contentScale = ContentScale.Crop
+            contentScale = ContentScale.Crop,
         )
     }
 }
-
-/** 点击封面后：专辑曲目列表（点曲目即播） */
-@Composable
-private fun AlbumTracksSheet(album: Album, vm: PlayerViewModel, onClose: () -> Unit) {
-    val tracks by vm.tracks.collectAsState()
-    val index by vm.currentIndex.collectAsState()
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(0xF0000000)),
-        contentAlignment = Alignment.Center
-    ) {
-        val listState = rememberScalingLazyListState()
-        val focusRequester = rememberRotaryFocusRequester()
-        ScalingLazyColumn(
-            state = listState,
-            modifier = Modifier
-                .fillMaxSize()
-                .rotaryScroll(listState, focusRequester),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            item {
-                Text(
-                    album.name, fontSize = 14.sp, maxLines = 1,
-                    textAlign = TextAlign.Center, color = Color.White
-                )
-            }
-            item {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    IconButton(onClick = onClose) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回封面流")
-                    }
-                    Button(
-                        onClick = { vm.playAlbum(album) },
-                        modifier = Modifier.size(40.dp)
-                    ) {
-                        Icon(Icons.Filled.PlayArrow, contentDescription = "播放全部")
-                    }
-                }
-            }
-            items(album.trackIndices.size) { i ->
-                val globalIndex = album.trackIndices[i]
-                val t = tracks.getOrNull(globalIndex)
-                val isCurrent = globalIndex == index
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { vm.selectTrack(globalIndex) }
-                        .padding(horizontal = 14.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        Icons.Filled.MusicNote,
-                        contentDescription = null,
-                        tint = if (isCurrent) FLOW_ACCENT else Color.Gray,
-                        modifier = Modifier.size(15.dp)
-                    )
-                    Text(
-                        "${i + 1}. ${t?.title ?: "未知曲目"}",
-                        fontSize = 11.sp,
-                        maxLines = 1,
-                        color = if (isCurrent) FLOW_ACCENT else Color.White,
-                        modifier = Modifier.padding(start = 6.dp)
-                    )
-                }
-            }
-            item { Spacer(Modifier.height(10.dp)) }
-        }
-    }
-}
-
-private val FLOW_ACCENT = Color(0xFF34C7F4)
