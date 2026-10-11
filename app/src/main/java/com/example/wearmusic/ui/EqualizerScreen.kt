@@ -21,7 +21,6 @@ import androidx.wear.compose.material.Chip
 import androidx.wear.compose.material.ChipDefaults
 import androidx.wear.compose.material.CompactButton
 import androidx.wear.compose.material.Text
-import androidx.media3.common.Player
 import com.example.wearmusic.EqPresets
 import com.example.wearmusic.PlayerViewModel
 
@@ -30,16 +29,18 @@ private val ACCENT = Color(0xFF34C7F4)
 /**
  * 手表「音效与播放设置」页：
  * - 均衡器开关、预设、各频段增益调节（每段 ±300 millibel = ±3dB）
- * - 播放模式（顺序/列表循环/单曲循环）、随机播放、播放速度、睡眠定时
+ * - 播放模式（列表顺序/列表随机/单曲循环）、随机播放、播放速度、睡眠定时
  * - 支持旋转表冠滚动
+ *
+ * @param onOpenAlbumFlow 顶部「选曲」入口：列表会吃掉垂直手势，这里补一个点击入口进入专辑流
  */
 @Composable
-fun AudioSettingsScreen(vm: PlayerViewModel) {
+fun AudioSettingsScreen(vm: PlayerViewModel, onOpenAlbumFlow: () -> Unit = {}) {
     val eqEnabled by vm.eqEnabled.collectAsState()
     val eqFreqs by vm.eqFreqs.collectAsState()
     val eqGains by vm.eqGains.collectAsState()
     val eqPreset by vm.eqPreset.collectAsState()
-    val repeatMode by vm.repeatMode.collectAsState()
+    val playMode by vm.playMode.collectAsState()
     val shuffle by vm.shuffle.collectAsState()
     val speed by vm.speed.collectAsState()
     val sleepMinutes by vm.sleepMinutes.collectAsState()
@@ -55,6 +56,14 @@ fun AudioSettingsScreen(vm: PlayerViewModel) {
         flingBehavior = ScalingLazyColumnDefaults.snapFlingBehavior(state = listState),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        item {
+            Chip(
+                onClick = onOpenAlbumFlow,
+                label = { Text("◀ 播放 · ▲ Cover Flow 选曲", fontSize = 11.sp) },
+                colors = ChipDefaults.chipColors(contentColor = ACCENT)
+            )
+        }
+
         item { Text("音效", fontSize = 14.sp) }
 
         // EQ 开关
@@ -123,18 +132,9 @@ fun AudioSettingsScreen(vm: PlayerViewModel) {
         item { Text("播放", fontSize = 11.sp, color = Color.Gray) }
         item {
             Chip(
-                onClick = vm::cycleRepeatMode,
+                onClick = vm::cyclePlayMode,
                 label = { Text("播放模式", fontSize = 11.sp) },
-                secondaryLabel = {
-                    Text(
-                        when (repeatMode) {
-                            Player.REPEAT_MODE_ONE -> "单曲循环"
-                            Player.REPEAT_MODE_ALL -> "列表循环"
-                            else -> "顺序播放"
-                        },
-                        fontSize = 9.sp
-                    )
-                }
+                secondaryLabel = { Text(playMode.label, fontSize = 9.sp) }
             )
         }
         item {

@@ -24,15 +24,19 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
-import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.automirrored.filled.QueueMusic
+import androidx.compose.material.icons.filled.Repeat
+import androidx.compose.material.icons.filled.RepeatOne
+import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.Icon
@@ -62,7 +66,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.example.wearmusic.PlayMode
 import com.example.wearmusic.PlayerViewModel
+import com.example.wearmusic.next
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -73,22 +79,53 @@ private val BG_VIGNETTE = listOf(Color(0x00000000), Color(0x99000000), Color(0xE
 /**
  * 手机端根界面：
  * 按需求"把下面的页面栏目去掉"，原本 5 页底部 NavigationBar 已删除。
- * 现只保留两个核心页：**播放器（首屏）+ Cover Flow 专辑流**，
- * 左右横滑切换，与图片中给出的"圆形 iPod 风"一致——只是容器从圆屏拓宽为矩形屏。
+ * 导航与手表端一致：
+ * - 横向（右滑）：0 播放器 → 1 歌词 → 2 设置
+ * - 纵向（上滑）：进入 Cover Flow 专辑流选曲（下滑返回）
+ * - 播放器右下角「列表选曲」按钮唤起平铺曲目列表（覆盖层）
  */
 @Composable
 fun PhoneApp(vm: PlayerViewModel) {
     MaterialTheme {
-        val pagerState = rememberPagerState(pageCount = { 2 })
+        val scope = rememberCoroutineScope()
+        val verticalPager = rememberPagerState(pageCount = { 2 })
+        val horizontalPager = rememberPagerState(pageCount = { 3 })
+        var showTrackList by remember { mutableStateOf(false) }
+
+        val goAlbumFlow: () -> Unit = { scope.launch { verticalPager.animateScrollToPage(1) } }
+        val goPlayer: () -> Unit = { scope.launch { verticalPager.animateScrollToPage(0) } }
+
         Box(modifier = Modifier.fillMaxSize().background(Color(0xFF0D0D0F))) {
-            HorizontalPager(
-                state = pagerState,
+            VerticalPager(
+                state = verticalPager,
                 modifier = Modifier.fillMaxSize()
-            ) { page ->
-                when (page) {
-                    0 -> PhonePlayerScreen(vm = vm)
-                    else -> AlbumCoverFlow(vm = vm, modifier = Modifier.fillMaxSize())
+            ) { vPage ->
+                if (vPage == 0) {
+                    HorizontalPager(
+                        state = horizontalPager,
+                        modifier = Modifier.fillMaxSize()
+                    ) { hPage ->
+                        when (hPage) {
+                            0 -> PhonePlayerScreen(
+                                vm = vm,
+                                onOpenTrackList = { showTrackList = true },
+                                onOpenAlbumFlow = goAlbumFlow
+                            )
+                            1 -> LyricsScreen(vm = vm, onOpenAlbumFlow = goAlbumFlow)
+                            else -> AudioSettingsScreen(vm = vm, onOpenAlbumFlow = goAlbumFlow)
+                        }
+                    }
+                } else {
+                    AlbumCoverFlow(
+                        vm = vm,
+                        modifier = Modifier.fillMaxSize(),
+                        onBack = goPlayer
+                    )
                 }
+            }
+
+            if (showTrackList) {
+                PhoneTrackListOverlay(vm = vm, onClose = { showTrackList = false })
             }
         }
     }
@@ -99,19 +136,36 @@ fun PhoneApp(vm: PlayerViewModel) {
  * - 背景：当前曲目的专辑封面 + RenderEffect 模糊 + 暗色 vignette
  * - 中部：圆形大封面 / 标题 / 歌手指针
  * - 控制行：上一首 / 播放 / 下一首,长按上一首/下一首 = 连续 seek
- * - 辅助行：耳机 / 收藏 / 喜欢
+ * - 辅助行：播放模式（单曲循环/列表随机/列表顺序）/ 收藏 / 列表选曲
  * - 进度条：Material3 Slider,拖动定位
+ *
+ * @param onOpenTrackList 唤起「列表式选曲」覆盖层
+ * @param onOpenAlbumFlow 上滑进入 Cover Flow 专辑流
  */
 @Composable
-fun PhonePlayerScreen(vm: PlayerViewModel) {
+fun PhonePlayerScreen(
+    vm: PlayerViewModel,
+    onOpenTrackList: () -> Unit,
+    onOpenAlbumFlow: () -> Unit = {},
+) {
     val tracks by vm.tracks.collectAsState()
     val index by vm.currentIndex.collectAsState()
     val isPlaying by vm.isPlaying.collectAsState()
     val position by vm.position.collectAsState()
     val duration by vm.duration.collectAsState()
     val favorites by vm.favorites.collectAsState()
+    val playMode by vm.playMode.collectAsState()
     val current = tracks.getOrNull(index)
     val isFavorite = current != null && favorites.contains(current.id)
+
+    // 切换播放模式后短暂显示模式名（1.5s 后恢复为时间）
+    var modeHint by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(modeHint) {
+        if (modeHint != null) {
+            delay(1500)
+            modeHint = null
+        }
+    }
 
     // 进度条安全值
     val progress = if (duration > 0) position.toFloat() / duration.toFloat() else 0f
@@ -274,19 +328,26 @@ fun PhonePlayerScreen(vm: PlayerViewModel) {
 
             Spacer(Modifier.height(18.dp))
 
-            // 辅助行
+            // 辅助行：播放模式 / 收藏 / 列表选曲
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(36.dp),
                 modifier = Modifier.padding(top = 4.dp)
             ) {
                 Icon(
-                    imageVector = Icons.Filled.Headphones,
-                    contentDescription = null,
-                    tint = Color(0xFFE5E5EE),
+                    imageVector = when (playMode) {
+                        PlayMode.REPEAT_ONE -> Icons.Filled.RepeatOne
+                        PlayMode.SHUFFLE -> Icons.Filled.Shuffle
+                        PlayMode.SEQUENTIAL -> Icons.Filled.Repeat
+                    },
+                    contentDescription = "播放模式：${playMode.label}",
+                    tint = if (playMode == PlayMode.SEQUENTIAL) Color(0xFFE5E5EE) else ACCENT,
                     modifier = Modifier
                         .size(28.dp)
-                        .clickable { /* 预留 */ }
+                        .clickable {
+                            vm.cyclePlayMode()
+                            modeHint = playMode.next().label
+                        }
                 )
                 Icon(
                     imageVector = if (isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
@@ -297,14 +358,23 @@ fun PhonePlayerScreen(vm: PlayerViewModel) {
                         .clickable { if (current != null) vm.toggleFavorite(current.id) }
                 )
                 Icon(
-                    imageVector = Icons.Filled.MusicNote,
-                    contentDescription = null,
+                    imageVector = Icons.AutoMirrored.Filled.QueueMusic,
+                    contentDescription = "列表选曲",
                     tint = Color(0xFFE5E5EE),
                     modifier = Modifier
                         .size(28.dp)
-                        .clickable { /* 预留 */ }
+                        .clickable(onClick = onOpenTrackList)
                 )
             }
+
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = modeHint ?: "▲ 上滑进入专辑流",
+                color = if (modeHint != null) ACCENT else Color(0x77FFFFFF),
+                fontSize = 11.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.clickable(onClick = onOpenAlbumFlow)
+            )
 
             Spacer(Modifier.height(8.dp))
         }

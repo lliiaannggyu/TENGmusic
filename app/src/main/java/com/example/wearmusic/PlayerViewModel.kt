@@ -80,6 +80,10 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     private val _shuffle = MutableStateFlow(false)
     val shuffle = _shuffle.asStateFlow()
 
+    /** 播放器左下角的三态播放模式（单曲循环 / 列表随机 / 列表顺序） */
+    private val _playMode = MutableStateFlow(PlayMode.SEQUENTIAL)
+    val playMode = _playMode.asStateFlow()
+
     private val _speed = MutableStateFlow(1f)
     val speed = _speed.asStateFlow()
 
@@ -129,6 +133,12 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             _volume.value = c.volume.coerceIn(0f, 1f)
             _repeatMode.value = c.repeatMode
             _shuffle.value = c.shuffleModeEnabled
+            // 反推三态模式：这样「设置页」单独改 repeat/shuffle 时，播放器按钮也能同步
+            _playMode.value = when {
+                c.repeatMode == Player.REPEAT_MODE_ONE -> PlayMode.REPEAT_ONE
+                c.shuffleModeEnabled -> PlayMode.SHUFFLE
+                else -> PlayMode.SEQUENTIAL
+            }
             _speed.value = c.playbackParameters.speed
             val idx = c.currentMediaItemIndex
             if (idx != _currentIndex.value) {
@@ -270,6 +280,25 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         _shuffle.value = next
         controller?.shuffleModeEnabled = next
     }
+
+    /** 设置三态播放模式（同步到底层 repeatMode + shuffle） */
+    fun setPlayMode(mode: PlayMode) {
+        _playMode.value = mode
+        val (repeat, shuffleOn) = when (mode) {
+            PlayMode.REPEAT_ONE -> Player.REPEAT_MODE_ONE to false
+            PlayMode.SHUFFLE -> Player.REPEAT_MODE_ALL to true
+            PlayMode.SEQUENTIAL -> Player.REPEAT_MODE_ALL to false
+        }
+        _repeatMode.value = repeat
+        _shuffle.value = shuffleOn
+        controller?.let {
+            it.repeatMode = repeat
+            it.shuffleModeEnabled = shuffleOn
+        }
+    }
+
+    /** 单曲循环 → 列表随机 → 列表顺序 → 单曲循环 */
+    fun cyclePlayMode() = setPlayMode(_playMode.value.next())
 
     fun setSpeed(v: Float) {
         val s = v.coerceIn(0.5f, 2.0f)

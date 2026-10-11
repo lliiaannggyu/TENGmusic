@@ -27,10 +27,13 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
-import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.automirrored.filled.QueueMusic
+import androidx.compose.material.icons.filled.Repeat
+import androidx.compose.material.icons.filled.RepeatOne
+import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.runtime.Composable
@@ -64,7 +67,9 @@ import androidx.wear.compose.material.Icon
 import androidx.wear.compose.material.ProgressIndicatorDefaults
 import androidx.wear.compose.material.Text
 import coil.compose.AsyncImage
+import com.example.wearmusic.PlayMode
 import com.example.wearmusic.PlayerViewModel
+import com.example.wearmusic.next
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -82,13 +87,20 @@ private val BG_VIGNETTE = listOf(Color(0x00000000), Color(0x99000000), Color(0xE
  * - 弧形进度条沿表圈,顶部留出时钟位置
  * - 中部：圆形大封面 / 标题 / 艺术家
  * - 底部主控制：上一首 ⏮ / 播放-暂停 ▶ / 下一首 ⏭
- * - 底部辅助：耳机 / 收藏 / 喜欢
+ * - 底部辅助：播放模式（单曲循环/列表随机/列表顺序）/ 收藏 / 列表选曲
  * - 长按切歌键 = 连续 seek（长按上一首=快退 3s/次; 长按下一首=快进 3s/次,每 200ms 重复一次）
  * - 表冠：旋转调音量
+ *
+ * @param onOpenTrackList 唤起「列表式选曲」覆盖层
+ * @param onOpenAlbumFlow 上滑进入 Cover Flow 专辑流（由外层 VerticalPager 提供）
  */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
-fun WearPlayerScreen(vm: PlayerViewModel) {
+fun WearPlayerScreen(
+    vm: PlayerViewModel,
+    onOpenTrackList: () -> Unit,
+    onOpenAlbumFlow: () -> Unit = {},
+) {
     val tracks by vm.tracks.collectAsState()
     val index by vm.currentIndex.collectAsState()
     val isPlaying by vm.isPlaying.collectAsState()
@@ -96,6 +108,7 @@ fun WearPlayerScreen(vm: PlayerViewModel) {
     val duration by vm.duration.collectAsState()
     val volume by vm.volume.collectAsState()
     val favorites by vm.favorites.collectAsState()
+    val playMode by vm.playMode.collectAsState()
     val current = tracks.getOrNull(index)
     val progress = if (duration > 0) position.toFloat() / duration.toFloat() else 0f
 
@@ -137,6 +150,15 @@ fun WearPlayerScreen(vm: PlayerViewModel) {
     }
 
     val isFavorite = current != null && favorites.contains(current.id)
+
+    // 切换播放模式后，底部时间行短暂变成模式名（1.5s 后恢复）
+    var modeHint by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(modeHint) {
+        if (modeHint != null) {
+            delay(1500)
+            modeHint = null
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -272,16 +294,23 @@ fun WearPlayerScreen(vm: PlayerViewModel) {
 
             Spacer(Modifier.height(8.dp))
 
-            // =========== 辅助行：耳机 / 收藏 / 喜欢 ===========
+            // =========== 辅助行：播放模式 / 收藏 / 列表选曲 ===========
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(18.dp),
                 modifier = Modifier.padding(top = 2.dp)
             ) {
                 SmallIconAction(
-                    icon = Icons.Filled.Headphones,
-                    tint = Color(0xFFE5E5EE),
-                    onClick = { /* 预留：未来可跳到「输出设备」 */ }
+                    icon = when (playMode) {
+                        PlayMode.REPEAT_ONE -> Icons.Filled.RepeatOne
+                        PlayMode.SHUFFLE -> Icons.Filled.Shuffle
+                        PlayMode.SEQUENTIAL -> Icons.Filled.Repeat
+                    },
+                    tint = if (playMode == PlayMode.SEQUENTIAL) Color(0xFFE5E5EE) else ACCENT,
+                    onClick = {
+                        vm.cyclePlayMode()
+                        modeHint = playMode.next().label
+                    }
                 )
                 SmallIconAction(
                     icon = if (isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
@@ -289,19 +318,26 @@ fun WearPlayerScreen(vm: PlayerViewModel) {
                     onClick = { if (current != null) vm.toggleFavorite(current.id) }
                 )
                 SmallIconAction(
-                    icon = Icons.Filled.MusicNote,
+                    icon = Icons.AutoMirrored.Filled.QueueMusic,
                     tint = Color(0xFFE5E5EE),
-                    onClick = { /* 预留：未来可跳到当前曲目的专辑 */ }
+                    onClick = onOpenTrackList
                 )
             }
 
             Spacer(Modifier.height(2.dp))
             Text(
-                text = "${formatMs(position)} / ${formatMs(duration)}",
-                color = Color(0xFF9C9CAE),
+                text = modeHint ?: "${formatMs(position)} / ${formatMs(duration)}",
+                color = if (modeHint != null) ACCENT else Color(0xFF9C9CAE),
                 fontSize = 9.sp,
                 textAlign = TextAlign.Center,
                 maxLines = 1
+            )
+            Text(
+                text = "▲ 上滑选曲",
+                color = Color(0x66FFFFFF),
+                fontSize = 7.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.clickable(onClick = onOpenAlbumFlow)
             )
 
             Spacer(Modifier.height(8.dp))
@@ -381,7 +417,7 @@ private fun CompactPlayPause(isPlaying: Boolean, onToggle: () -> Unit) {
     }
 }
 
-/** 底部的「耳机 / 收藏 / 喜欢」图标按钮 */
+/** 底部的「播放模式 / 收藏 / 列表选曲」图标按钮 */
 @Composable
 private fun SmallIconAction(
     icon: androidx.compose.ui.graphics.vector.ImageVector,

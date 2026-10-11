@@ -5,6 +5,7 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -41,9 +42,11 @@ private val ACCENT = Color(0xFF34C7F4)
  * - 位移：当前行变化时平滑滚动居中，并配合 snapFlingBehavior 吸附
  * - 背景：强调色径向渐变，强化圆形表盘氛围
  * - 表冠：支持旋转表冠滚动歌词
+ *
+ * @param onOpenAlbumFlow 顶部「选曲」入口：列表会吃掉垂直手势，这里补一个点击入口进入专辑流
  */
 @Composable
-fun LyricsScreen(vm: PlayerViewModel) {
+fun LyricsScreen(vm: PlayerViewModel, onOpenAlbumFlow: () -> Unit = {}) {
     val lyrics by vm.lyrics.collectAsState()
     val idx by vm.lyricIndex.collectAsState()
     val listState = rememberScalingLazyListState()
@@ -66,6 +69,17 @@ fun LyricsScreen(vm: PlayerViewModel) {
             ),
         contentAlignment = Alignment.Center
     ) {
+        Text(
+            text = "◀ 播放 · ▲ 选曲",
+            color = Color(0x88FFFFFF),
+            fontSize = 9.sp,
+            textAlign = TextAlign.Center,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 8.dp)
+                .clickable(onClick = onOpenAlbumFlow)
+        )
+
         if (lyrics.isEmpty()) {
             Text(
                 "暂无歌词\n在文件管理页匹配同名 .lrc",

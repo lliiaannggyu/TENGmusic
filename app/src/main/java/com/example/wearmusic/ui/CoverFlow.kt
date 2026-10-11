@@ -11,10 +11,11 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Button
@@ -57,6 +58,7 @@ import com.example.wearmusic.coverflow.rememberCoverFlowState
  * 这里只负责把「专辑」数据接入它，并加上：当前专辑名、点封面进曲目、手表表冠翻动。
  *
  * @param sizeFraction 中间封面边长 = 容器短边 × 该比例（默认 0.5，即半屏宽，iPod 标准比例）
+ * @param onBack 左上角返回：回到播放器（下滑手势之外的兜底入口）
  */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -64,6 +66,7 @@ fun AlbumCoverFlow(
     vm: PlayerViewModel,
     modifier: Modifier = Modifier,
     sizeFraction: Float = 0.5f,
+    onBack: () -> Unit = {},
 ) {
     val albums by vm.albums.collectAsState()
     var opened by remember { mutableStateOf<Album?>(null) }
@@ -132,6 +135,18 @@ fun AlbumCoverFlow(
         if (opened != null) {
             AlbumTracksSheet(album = opened!!, vm = vm, onClose = { opened = null })
         }
+
+        // 左上角返回：回到播放器
+        Icon(
+            Icons.AutoMirrored.Filled.ArrowBack,
+            contentDescription = "返回播放器",
+            tint = Color.White,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(start = 12.dp, top = 10.dp)
+                .size(20.dp)
+                .clickable(onClick = onBack)
+        )
 
         // 底部居中：当前专辑名 / 歌手（仅在已居中时显示）
         val current = albums.getOrNull(state.selectedIndex.coerceAtLeast(0))
@@ -206,7 +221,7 @@ private fun AlbumTracksSheet(album: Album, vm: PlayerViewModel, onClose: () -> U
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     IconButton(onClick = onClose) {
-                        Icon(Icons.Filled.ArrowBack, contentDescription = "返回封面流")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回封面流")
                     }
                     Button(
                         onClick = { vm.playAlbum(album) },
