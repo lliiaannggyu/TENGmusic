@@ -1,14 +1,12 @@
 package com.example.wearmusic
 
 import android.Manifest
-import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.wearmusic.ui.PhoneApp
 import com.example.wearmusic.ui.WearMusicApp
 
 class MainActivity : ComponentActivity() {
@@ -28,12 +26,9 @@ class MainActivity : ComponentActivity() {
                 permissionLauncher.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
         }
 
-        // 运行时判断设备类型：手表用圆形 Wear UI，手机用 Material3 UI
-        val isWatch = packageManager.hasSystemFeature(PackageManager.FEATURE_WATCH)
-
+        // 纯手表应用：直接加载 Wear OS UI
         setContent {
-            val vm: PlayerViewModel = viewModel()
-            if (isWatch) WearMusicApp(vm) else PhoneApp(vm)
+            WearMusicApp(viewModel())
         }
     }
 }

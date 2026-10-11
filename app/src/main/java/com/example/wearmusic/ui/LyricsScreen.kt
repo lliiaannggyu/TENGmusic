@@ -27,7 +27,8 @@ import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumnDefaults
 import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
-import androidx.wear.compose.material.Text
+import androidx.wear.compose.material3.ScreenScaffold
+import androidx.wear.compose.material3.Text
 import com.example.wearmusic.PlayerViewModel
 
 private val ACCENT = Color(0xFF34C7F4)
@@ -59,27 +60,17 @@ fun LyricsScreen(vm: PlayerViewModel, onOpenAlbumFlow: () -> Unit = {}) {
         }
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(
-                Brush.radialGradient(
-                    colors = listOf(Color(0x1F34C7F4), Color(0x00000000))
-                )
-            ),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            text = "◀ 播放 · ▲ 选曲",
-            color = Color(0x88FFFFFF),
-            fontSize = 9.sp,
-            textAlign = TextAlign.Center,
+    ScreenScaffold(scrollState = listState) { padding ->
+        Box(
             modifier = Modifier
-                .align(Alignment.TopCenter)
-                .padding(top = 8.dp)
-                .clickable(onClick = onOpenAlbumFlow)
-        )
-
+                .fillMaxSize()
+                .background(
+                    Brush.radialGradient(
+                        colors = listOf(Color(0x1F34C7F4), Color(0x00000000))
+                    )
+                ),
+            contentAlignment = Alignment.Center
+        ) {
         if (lyrics.isEmpty()) {
             Text(
                 "暂无歌词\n在文件管理页匹配同名 .lrc",
@@ -90,19 +81,29 @@ fun LyricsScreen(vm: PlayerViewModel, onOpenAlbumFlow: () -> Unit = {}) {
         } else {
             ScalingLazyColumn(
                 state = listState,
+                contentPadding = padding,
                 modifier = Modifier
                     .fillMaxSize()
                     .rotaryScroll(listState, focusRequester),
                 flingBehavior = ScalingLazyColumnDefaults.snapFlingBehavior(state = listState),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                item { Spacer(Modifier.height(40.dp)) }
+                item {
+                    Text(
+                        text = "◀ 播放 · ▲ 选曲",
+                        color = Color(0x88FFFFFF),
+                        fontSize = 9.sp,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .clickable(onClick = onOpenAlbumFlow)
+                    )
+                }
                 items(lyrics.size) { i ->
                     LyricLine(text = lyrics[i].text, active = i == idx)
                 }
-                item { Spacer(Modifier.height(40.dp)) }
             }
         }
+    }
     }
 }
 

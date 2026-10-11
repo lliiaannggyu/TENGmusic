@@ -13,18 +13,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -40,8 +33,10 @@ import androidx.compose.ui.unit.sp
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.itemsIndexed as scalingItemsIndexed
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
-import androidx.wear.compose.material.Button
-import androidx.wear.compose.material.Text as WearText
+import androidx.wear.compose.material3.Button
+import androidx.wear.compose.material3.Icon
+import androidx.wear.compose.material3.ScreenScaffold
+import androidx.wear.compose.material3.Text as WearText
 import com.example.wearmusic.PlayerViewModel
 import com.example.wearmusic.Track
 
@@ -67,11 +62,12 @@ fun WearTrackListOverlay(vm: PlayerViewModel, onClose: () -> Unit) {
         if (index in tracks.indices) listState.animateScrollToItem(index)
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(LIST_BG)
-    ) {
+    ScreenScaffold(scrollState = listState) { padding ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(LIST_BG)
+        ) {
         if (tracks.isEmpty()) {
             WearText(
                 "暂无曲目\n授权后自动扫描本地音乐",
@@ -123,6 +119,7 @@ fun WearTrackListOverlay(vm: PlayerViewModel, onClose: () -> Unit) {
                 )
             }
             item { Spacer(Modifier.height(8.dp)) }
+        }
         }
     }
 }
@@ -180,130 +177,6 @@ private fun WearTrackRow(
                 contentDescription = "已收藏",
                 tint = Color(0xFFFF5A7A),
                 modifier = Modifier.size(12.dp)
-            )
-        }
-    }
-}
-
-/**
- * 手机「列表式选曲」覆盖层（Material3 版），功能同 [WearTrackListOverlay]。
- */
-@Composable
-fun PhoneTrackListOverlay(vm: PlayerViewModel, onClose: () -> Unit) {
-    val tracks by vm.tracks.collectAsState()
-    val index by vm.currentIndex.collectAsState()
-    val favorites by vm.favorites.collectAsState()
-    val listState = rememberLazyListState()
-
-    LaunchedEffect(index) {
-        if (index in tracks.indices) listState.animateScrollToItem(index)
-    }
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(LIST_BG)
-    ) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(onClick = onClose) {
-                    Icon(
-                        imageVector = Icons.Filled.Close,
-                        contentDescription = "关闭",
-                        tint = Color.White
-                    )
-                }
-                Text(
-                    "曲目 ${tracks.size}",
-                    fontSize = 17.sp,
-                    color = Color.White,
-                    modifier = Modifier.weight(1f)
-                )
-            }
-            if (tracks.isEmpty()) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(
-                        "暂无曲目\n授权后自动扫描本地音乐",
-                        fontSize = 14.sp,
-                        color = Color.Gray,
-                        textAlign = TextAlign.Center
-                    )
-                }
-            } else {
-                LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
-                    itemsIndexed(tracks) { i, t ->
-                        PhoneTrackRow(
-                            track = t,
-                            order = i + 1,
-                            isCurrent = i == index,
-                            isFavorite = favorites.contains(t.id),
-                            onClick = { vm.selectTrack(i) }
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-/** 单行曲目（手机） */
-@Composable
-private fun PhoneTrackRow(
-    track: Track,
-    order: Int,
-    isCurrent: Boolean,
-    isFavorite: Boolean,
-    onClick: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(if (isCurrent) Color(0x2234C7F4) else Color.Transparent)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text = "$order",
-            fontSize = 12.sp,
-            color = Color.Gray,
-            modifier = Modifier.width(28.dp)
-        )
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = track.title,
-                fontSize = 15.sp,
-                color = if (isCurrent) LIST_ACCENT else Color.White,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Text(
-                text = track.artist,
-                fontSize = 12.sp,
-                color = Color.Gray,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-        if (isCurrent) {
-            Icon(
-                imageVector = Icons.Filled.PlayArrow,
-                contentDescription = "正在播放",
-                tint = LIST_ACCENT,
-                modifier = Modifier.size(20.dp)
-            )
-        } else if (isFavorite) {
-            Icon(
-                imageVector = Icons.Filled.Favorite,
-                contentDescription = "已收藏",
-                tint = Color(0xFFFF5A7A),
-                modifier = Modifier.size(18.dp)
             )
         }
     }

@@ -2,8 +2,12 @@ package com.example.wearmusic.ui
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.runtime.Composable
@@ -19,10 +23,10 @@ import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumnDefaults
 import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
-import androidx.wear.compose.material.Chip
-import androidx.wear.compose.material.ChipDefaults
-import androidx.wear.compose.material.Icon
-import androidx.wear.compose.material.Text
+import androidx.wear.compose.material3.Card
+import androidx.wear.compose.material3.CardDefaults
+import androidx.wear.compose.material3.Icon
+import androidx.wear.compose.material3.Text
 import com.example.wearmusic.PlayerViewModel
 
 private val ACCENT = Color(0xFF34C7F4)
@@ -77,17 +81,30 @@ fun FileManagerScreen(vm: PlayerViewModel) {
             } else {
                 null
             }
-            Chip(
+            Card(
                 onClick = { vm.selectTrack(i) },
-                label = { Text(t.title, maxLines = 1, fontSize = 12.sp) },
-                secondaryLabel = { Text(t.artist, maxLines = 1, fontSize = 10.sp) },
-                icon = favIcon,
+                modifier = Modifier.fillMaxWidth(),
                 colors = if (isCurrent) {
-                    ChipDefaults.chipColors(contentColor = ACCENT)
+                    CardDefaults.cardColors(contentColor = ACCENT)
                 } else {
-                    ChipDefaults.chipColors()
+                    CardDefaults.cardColors()
                 }
-            )
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (favIcon != null) {
+                        Box(
+                            modifier = Modifier.size(20.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            favIcon()
+                        }
+                    }
+                    Column {
+                        Text(t.title, maxLines = 1, fontSize = 12.sp)
+                        Text(t.artist, maxLines = 1, fontSize = 10.sp)
+                    }
+                }
+            }
         }
     }
 }

@@ -1,24 +1,49 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 android {
     namespace = "com.example.wearmusic"
-    compileSdk = 34
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.example.wearmusic"
         minSdk = 25          // Android 7.1：Wear OS 手表与普通安卓手机均可安装
-        targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        targetSdk = 36
+        versionCode = 4
+        versionName = "1.3"
     }
 
-    buildFeatures { compose = true }
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
 
-    composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.14"
+    signingConfigs {
+        create("release") {
+            val props = rootProject.file("local.properties").let { f ->
+                if (f.exists()) {
+                    f.readLines()
+                        .map { it.split("=", limit = 2) }
+                        .filter { it.size == 2 }
+                        .associate { it[0].trim() to it[1].trim() }
+                } else emptyMap()
+            }
+            storeFile = rootProject.file(props["RELEASE_STORE_FILE"] ?: "release-key.keystore")
+            storePassword = props["RELEASE_STORE_PASSWORD"]
+            keyAlias = props["RELEASE_KEY_ALIAS"]
+            keyPassword = props["RELEASE_KEY_PASSWORD"]
+        }
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            isShrinkResources = false
+            signingConfig = signingConfigs.getByName("release")
+        }
     }
 
     compileOptions {
@@ -30,35 +55,43 @@ android {
         freeCompilerArgs += listOf(
             "-opt-in=androidx.compose.foundation.ExperimentalFoundationApi",
             // 旋转表冠（rotary）输入 API
-            "-opt-in=androidx.compose.ui.ExperimentalComposeUiApi"
+            "-opt-in=androidx.compose.ui.ExperimentalComposeUiApi",
         )
     }
 }
 
 dependencies {
-    val composeUi = "1.6.7"
-    val wearCompose = "1.3.1"
-    val media3 = "1.3.1"
+    // Compose BOM 统一管理 ui / foundation / runtime / material3 / material-icons 版本
+    // 2026.06.01 → Compose 1.11.4 + material3 1.4.0（Material 3 Expressive）
+    // （2026.09.00 的 Compose 1.12.1 要求 AGP 9.1 + compileSdk 37，AGP 8.13 不支持）
+    val composeBom = platform("androidx.compose:compose-bom:2026.06.01")
 
-    implementation("androidx.core:core-ktx:1.13.1")
-    implementation("androidx.activity:activity-compose:1.9.0")
-    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
+    implementation("androidx.core:core-ktx:1.16.0")
+    implementation("androidx.activity:activity-compose:1.11.0")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.4")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.9.4")
 
-    implementation("androidx.compose.ui:ui:$composeUi")
-    implementation("androidx.compose.foundation:foundation:$composeUi")
-    implementation("androidx.compose.material:material-icons-core:$composeUi")
-    implementation("androidx.compose.material:material-icons-extended:$composeUi")
-    implementation("androidx.wear.compose:compose-material:$wearCompose")
-    implementation("androidx.wear.compose:compose-foundation:$wearCompose")
-    // 手机端 UI（普通安卓设备）
-    implementation("androidx.compose.material3:material3:1.2.1")
-    // 专辑封面加载（Coil）
+    // ---- Compose 核心（版本由 BOM 决定）----
+    implementation(composeBom)
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.ui:ui-graphics")
+    implementation("androidx.compose.foundation:foundation")
+    implementation("androidx.compose.material:material-icons-core")
+    implementation("androidx.compose.material:material-icons-extended")
+
+    // ---- Wear OS 官方 Material 3 组件（手表端，纯手表应用）----
+    implementation("androidx.wear.compose:compose-material3:1.6.2")
+    implementation("androidx.wear.compose:compose-foundation:1.6.2")
+
+    // 专辑封面加载
     implementation("io.coil-kt:coil-compose:2.6.0")
 
+    // 播放内核
+    val media3 = "1.3.1"
     implementation("androidx.media3:media3-exoplayer:$media3")
     implementation("androidx.media3:media3-session:$media3")
     implementation("androidx.media3:media3-common:$media3")
 
-    debugImplementation("androidx.compose.ui:ui-tooling:$composeUi")
+    debugImplementation("androidx.compose.ui:ui-tooling")
+    debugImplementation("androidx.wear.compose:compose-ui-tooling:1.6.2")
 }

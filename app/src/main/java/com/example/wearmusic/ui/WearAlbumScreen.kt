@@ -14,7 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.runtime.Composable
@@ -34,10 +34,10 @@ import androidx.compose.ui.unit.sp
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
-import androidx.wear.compose.material.Button
-import androidx.wear.compose.material.CompactButton
-import androidx.wear.compose.material.Icon
-import androidx.wear.compose.material.Text
+import androidx.wear.compose.material3.Button
+import androidx.wear.compose.material3.CompactButton
+import androidx.wear.compose.material3.Icon
+import androidx.wear.compose.material3.Text
 import coil.compose.AsyncImage
 import com.example.wearmusic.Album
 import com.example.wearmusic.PlayerViewModel
@@ -164,7 +164,7 @@ private fun AlbumDetailScreen(vm: PlayerViewModel, album: Album, onBack: () -> U
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 CompactButton(onClick = onBack) {
-                    Icon(Icons.Filled.ArrowBack, contentDescription = "返回专辑列表")
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回专辑列表")
                 }
                 Button(onClick = { vm.playAlbum(album) }, modifier = Modifier.size(44.dp)) {
                     Icon(Icons.Filled.PlayArrow, contentDescription = "播放全部")

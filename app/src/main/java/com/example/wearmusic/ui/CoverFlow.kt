@@ -9,19 +9,14 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material3.Button
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -42,6 +37,13 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
+import androidx.wear.compose.foundation.lazy.items
+import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
+import androidx.wear.compose.material3.Button
+import androidx.wear.compose.material3.Icon
+import androidx.wear.compose.material3.IconButton
+import androidx.wear.compose.material3.Text
 import coil.compose.AsyncImage
 import com.example.wearmusic.Album
 import com.example.wearmusic.PlayerViewModel
@@ -72,7 +74,7 @@ fun AlbumCoverFlow(
     var opened by remember { mutableStateOf<Album?>(null) }
 
     Box(
-        modifier = modifier.fillMaxSize(),
+        modifier = modifier.fillMaxSize().background(Color(0xFF06070A)),
         contentAlignment = Alignment.Center
     ) {
         if (albums.isEmpty()) {
@@ -85,7 +87,7 @@ fun AlbumCoverFlow(
             return@Box
         }
 
-        // 表冠（手表上转动表冠 → 翻动封面）；手机上无表冠，不影响触摸滑动
+        // 表冠（转动手表表冠翻动封面）；触摸滑动同样可用
         val focusRequester = remember { FocusRequester() }
         val stateRef = remember { mutableStateOf<CoverFlowState?>(null) }
         val centeredIndex = remember { mutableStateOf(-1) }
@@ -136,19 +138,7 @@ fun AlbumCoverFlow(
             AlbumTracksSheet(album = opened!!, vm = vm, onClose = { opened = null })
         }
 
-        // 左上角返回：回到播放器
-        Icon(
-            Icons.AutoMirrored.Filled.ArrowBack,
-            contentDescription = "返回播放器",
-            tint = Color.White,
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(start = 12.dp, top = 10.dp)
-                .size(20.dp)
-                .clickable(onClick = onBack)
-        )
-
-        // 底部居中：当前专辑名 / 歌手（仅在已居中时显示）
+        // 底部居中：返回按钮 + 当前专辑名 / 歌手（圆形安全区内）
         val current = albums.getOrNull(state.selectedIndex.coerceAtLeast(0))
         Column(
             modifier = Modifier
@@ -156,6 +146,14 @@ fun AlbumCoverFlow(
                 .padding(bottom = 14.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            IconButton(onClick = onBack) {
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "返回",
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
             Text(
                 text = current?.name ?: "",
                 fontSize = 13.sp,
@@ -205,8 +203,13 @@ private fun AlbumTracksSheet(album: Album, vm: PlayerViewModel, onClose: () -> U
             .background(Color(0xF0000000)),
         contentAlignment = Alignment.Center
     ) {
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
+        val listState = rememberScalingLazyListState()
+        val focusRequester = rememberRotaryFocusRequester()
+        ScalingLazyColumn(
+            state = listState,
+            modifier = Modifier
+                .fillMaxSize()
+                .rotaryScroll(listState, focusRequester),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             item {
@@ -225,7 +228,7 @@ private fun AlbumTracksSheet(album: Album, vm: PlayerViewModel, onClose: () -> U
                     }
                     Button(
                         onClick = { vm.playAlbum(album) },
-                        modifier = Modifier.height(40.dp)
+                        modifier = Modifier.size(40.dp)
                     ) {
                         Icon(Icons.Filled.PlayArrow, contentDescription = "播放全部")
                     }
@@ -237,7 +240,7 @@ private fun AlbumTracksSheet(album: Album, vm: PlayerViewModel, onClose: () -> U
                 val isCurrent = globalIndex == index
                 Row(
                     modifier = Modifier
-                        .fillMaxSize()
+                        .fillMaxWidth()
                         .clickable { vm.selectTrack(globalIndex) }
                         .padding(horizontal = 14.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically
@@ -246,7 +249,7 @@ private fun AlbumTracksSheet(album: Album, vm: PlayerViewModel, onClose: () -> U
                         Icons.Filled.MusicNote,
                         contentDescription = null,
                         tint = if (isCurrent) FLOW_ACCENT else Color.Gray,
-                        modifier = Modifier.height(15.dp)
+                        modifier = Modifier.size(15.dp)
                     )
                     Text(
                         "${i + 1}. ${t?.title ?: "未知曲目"}",

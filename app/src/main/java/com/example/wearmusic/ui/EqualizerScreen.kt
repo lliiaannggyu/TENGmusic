@@ -17,10 +17,12 @@ import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumnDefaults
 import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
-import androidx.wear.compose.material.Chip
-import androidx.wear.compose.material.ChipDefaults
-import androidx.wear.compose.material.CompactButton
-import androidx.wear.compose.material.Text
+import androidx.wear.compose.material3.Card
+import androidx.wear.compose.material3.CardDefaults
+import androidx.wear.compose.material3.ScreenScaffold
+import androidx.wear.compose.material3.CompactButton
+import androidx.wear.compose.material3.Text
+import com.example.wearmusic.BuildConfig
 import com.example.wearmusic.EqPresets
 import com.example.wearmusic.PlayerViewModel
 
@@ -31,6 +33,8 @@ private val ACCENT = Color(0xFF34C7F4)
  * - 均衡器开关、预设、各频段增益调节（每段 ±300 millibel = ±3dB）
  * - 播放模式（列表顺序/列表随机/单曲循环）、随机播放、播放速度、睡眠定时
  * - 支持旋转表冠滚动
+ *
+ * 注：Wear M3 1.6（Expressive）已移除 Chip，列表项改用 Card（content 槽布局）。
  *
  * @param onOpenAlbumFlow 顶部「选曲」入口：列表会吃掉垂直手势，这里补一个点击入口进入专辑流
  */
@@ -48,34 +52,40 @@ fun AudioSettingsScreen(vm: PlayerViewModel, onOpenAlbumFlow: () -> Unit = {}) {
     val listState = rememberScalingLazyListState()
     val focusRequester = rememberRotaryFocusRequester()
 
-    ScalingLazyColumn(
-        state = listState,
-        modifier = Modifier
-            .fillMaxSize()
-            .rotaryScroll(listState, focusRequester),
-        flingBehavior = ScalingLazyColumnDefaults.snapFlingBehavior(state = listState),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
+    ScreenScaffold(scrollState = listState) { padding ->
+        ScalingLazyColumn(
+            state = listState,
+            contentPadding = padding,
+            modifier = Modifier
+                .fillMaxSize()
+                .rotaryScroll(listState, focusRequester),
+            flingBehavior = ScalingLazyColumnDefaults.snapFlingBehavior(state = listState),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
         item {
-            Chip(
+            Card(
                 onClick = onOpenAlbumFlow,
-                label = { Text("◀ 播放 · ▲ Cover Flow 选曲", fontSize = 11.sp) },
-                colors = ChipDefaults.chipColors(contentColor = ACCENT)
-            )
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(contentColor = ACCENT)
+            ) {
+                Text("◀ 播放 · ▲ Cover Flow 选曲", fontSize = 11.sp)
+            }
         }
 
         item { Text("音效", fontSize = 14.sp) }
 
         // EQ 开关
         item {
-            Chip(
+            Card(
                 onClick = { vm.setEqEnabled(!eqEnabled) },
-                label = { Text("均衡器", fontSize = 11.sp) },
-                secondaryLabel = { Text(if (eqEnabled) "已开启" else "已关闭", fontSize = 9.sp) },
-                colors = ChipDefaults.chipColors(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
                     contentColor = if (eqEnabled) ACCENT else Color.Gray
                 )
-            )
+            ) {
+                Text("均衡器", fontSize = 11.sp)
+                Text(if (eqEnabled) "已开启" else "已关闭", fontSize = 9.sp)
+            }
         }
 
         if (eqFreqs.isEmpty()) {
@@ -93,15 +103,17 @@ fun AudioSettingsScreen(vm: PlayerViewModel, onOpenAlbumFlow: () -> Unit = {}) {
             items(EqPresets.ALL.size) { i ->
                 val preset = EqPresets.ALL[i]
                 val selected = preset.name == eqPreset
-                Chip(
+                Card(
                     onClick = { vm.applyPreset(preset) },
-                    label = { Text(preset.name, fontSize = 11.sp) },
+                    modifier = Modifier.fillMaxWidth(),
                     colors = if (selected) {
-                        ChipDefaults.chipColors(contentColor = ACCENT)
+                        CardDefaults.cardColors(contentColor = ACCENT)
                     } else {
-                        ChipDefaults.chipColors()
+                        CardDefaults.cardColors()
                     }
-                )
+                ) {
+                    Text(preset.name, fontSize = 11.sp)
+                }
             }
 
             // 频段增益
@@ -131,30 +143,36 @@ fun AudioSettingsScreen(vm: PlayerViewModel, onOpenAlbumFlow: () -> Unit = {}) {
         // 播放设置
         item { Text("播放", fontSize = 11.sp, color = Color.Gray) }
         item {
-            Chip(
+            Card(
                 onClick = vm::cyclePlayMode,
-                label = { Text("播放模式", fontSize = 11.sp) },
-                secondaryLabel = { Text(playMode.label, fontSize = 9.sp) }
-            )
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors()
+            ) {
+                Text("播放模式", fontSize = 11.sp)
+                Text(playMode.label, fontSize = 9.sp)
+            }
         }
         item {
-            Chip(
+            Card(
                 onClick = vm::toggleShuffle,
-                label = { Text("随机播放", fontSize = 11.sp) },
-                secondaryLabel = { Text(if (shuffle) "已开启" else "已关闭", fontSize = 9.sp) },
-                colors = ChipDefaults.chipColors(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
                     contentColor = if (shuffle) ACCENT else Color.Gray
                 )
-            )
+            ) {
+                Text("随机播放", fontSize = 11.sp)
+                Text(if (shuffle) "已开启" else "已关闭", fontSize = 9.sp)
+            }
         }
         item {
-            Chip(
+            Card(
                 onClick = { vm.setSpeed(nextPlaybackSpeed(speed)) },
-                label = { Text("播放速度", fontSize = 11.sp) },
-                secondaryLabel = {
-                    Text("${"%.2f".format(speed).trimEnd('0').trimEnd('.')}x", fontSize = 9.sp)
-                }
-            )
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors()
+            ) {
+                Text("播放速度", fontSize = 11.sp)
+                Text("${"%.2f".format(speed).trimEnd('0').trimEnd('.')}x", fontSize = 9.sp)
+            }
         }
 
         // 睡眠定时
@@ -162,21 +180,32 @@ fun AudioSettingsScreen(vm: PlayerViewModel, onOpenAlbumFlow: () -> Unit = {}) {
         items(listOf(0, 15, 30, 60).size) { i ->
             val minutes = listOf(0, 15, 30, 60)[i]
             val selected = sleepMinutes == minutes
-            Chip(
+            Card(
                 onClick = { vm.setSleepTimer(minutes) },
-                label = {
-                    Text(
-                        if (minutes == 0) "关闭" else "$minutes 分钟",
-                        fontSize = 11.sp
-                    )
-                },
+                modifier = Modifier.fillMaxWidth(),
                 colors = if (selected) {
-                    ChipDefaults.chipColors(contentColor = ACCENT)
+                    CardDefaults.cardColors(contentColor = ACCENT)
                 } else {
-                    ChipDefaults.chipColors()
+                    CardDefaults.cardColors()
                 }
+            ) {
+                Text(
+                    if (minutes == 0) "关闭" else "$minutes 分钟",
+                    fontSize = 11.sp
+                )
+            }
+        }
+
+        // 版本号（用于确认当前安装的构建版本）
+        item {
+            Text(
+                "WearMusic v${BuildConfig.VERSION_NAME}",
+                fontSize = 10.sp,
+                color = Color.Gray,
+                textAlign = TextAlign.Center
             )
         }
+    }
     }
 }
 

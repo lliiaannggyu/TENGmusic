@@ -5,7 +5,6 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.width
-import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -73,7 +72,7 @@ internal fun Cover(
                         content()
                     }
                 } else {
-                    Surface(
+                    Box(
                         modifier = Modifier.clickable(
                             interactionSource = interactionSource,
                             indication = null,
