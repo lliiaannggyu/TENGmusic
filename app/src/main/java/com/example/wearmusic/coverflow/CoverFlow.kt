@@ -84,13 +84,13 @@ fun CoverFlow(
 }
 
 /**
- * 带回弹的吸附 [FlingBehavior]（替代 1.6.7 不暴露 snapAnimationSpec 的
+ * 丝滑版吸附 [FlingBehavior]（替代 1.6.7 不暴露 snapAnimationSpec 的
  * `rememberSnapFlingBehavior`）。
  *
  * 思路：列表布局完全确定（item0 / 末项 = spacerWidth，其余 = coverOffset），
  * 因此能精确算出「把某一项滚到容器正中」的像素位移；松手时按速度估计要跨越的张数，
- * 再用 [CoverFlowState.flingSnap] 的弹簧（DampingRatioMediumBouncy）滚动，
- * 产生轻微冲过中心再弹回的回弹手感。
+ * 为追求"丝滑"，将阈值放宽、跨越张数按速度曲线更柔顺地用对数压缩，
+ * 最后用 [CoverFlowState.flingSnap] 的低回弹弹簧滚动,翻页连贯不颠簸。
  */
 private fun bouncySnapFlingBehavior(state: CoverFlowState): FlingBehavior {
     return object : FlingBehavior {
@@ -122,12 +122,19 @@ private fun bouncySnapFlingBehavior(state: CoverFlowState): FlingBehavior {
                 }
             }
 
-            // 按初速度估计要跨越的张数（保留惯性，不再是「急松手急停」）
-            val raw = (initialVelocity / 1500f).roundToInt()
-            val steps = if (abs(initialVelocity) < 150f) {
-                0
-            } else {
-                raw.coerceIn(-15, 15).let { if (it == 0) (if (initialVelocity >= 0f) 1 else -1) else it }
+            // 丝滑版：阈值更宽、跨越张数用 sqrt 软化,
+            // 弱甩慢回，强甩多页但增速递减,不会突然刷一大串
+            val absV = abs(initialVelocity)
+            val steps = when {
+                absV < 250f -> 0
+                else -> {
+                    // sqrt 软化,1500 px/s 时约 1 张,3000 -> 2,6000 -> 3 ...
+                    val raw = (Math.sqrt(absV / 1500.0)).toInt()
+                    raw.coerceIn(0, 6).let { step ->
+                        if (step == 0) (if (initialVelocity >= 0f) 1 else -1)
+                        else if (initialVelocity < 0f) -step else step
+                    }
+                }
             }
             val target = (nearest + steps).coerceIn(1, itemCount - 2)
 

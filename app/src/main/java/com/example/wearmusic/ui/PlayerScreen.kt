@@ -1,5 +1,8 @@
 package com.example.wearmusic.ui
 
+import android.graphics.RenderEffect
+import android.graphics.Shader
+import android.os.Build
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
@@ -9,19 +12,22 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -33,6 +39,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
@@ -42,59 +49,78 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.rotary.onRotaryScrollEvent
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.wear.compose.material.Button
 import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material.CompactButton
 import androidx.wear.compose.material.Icon
 import androidx.wear.compose.material.ProgressIndicatorDefaults
 import androidx.wear.compose.material.Text
-import androidx.media3.common.Player
 import coil.compose.AsyncImage
 import com.example.wearmusic.PlayerViewModel
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 private val ACCENT = Color(0xFF34C7F4)
+private val BG_VIGNETTE = listOf(Color(0x00000000), Color(0x99000000), Color(0xEE000000))
 
 /**
- * 手表播放器页（圆形屏优先）：
- * - 贴表圈环形进度条 + 强调色径向渐变背景
- * - 专辑封面做「黑胶唱片」旋转动画：播放时匀速旋转，暂停时冻结在当前角度
- * - 旋转表冠调音量（手表原生交互）
- * - 播放模式 / 速度 / 收藏 / 三键控制
+ * 手表播放器页（圆形屏，仿图中的 iPod 风格）：
+ * - 背景：当前播放曲目的专辑封面 + RenderEffect 高斯模糊（API 31+，低版降级为深色 vignette）
+ * - 顶部：当前时间
+ * - 弧形进度条沿表圈,顶部留出时钟位置
+ * - 中部：圆形大封面 / 标题 / 艺术家
+ * - 底部主控制：上一首 ⏮ / 播放-暂停 ▶ / 下一首 ⏭
+ * - 底部辅助：耳机 / 收藏 / 喜欢
+ * - 长按切歌键 = 连续 seek（长按上一首=快退 3s/次; 长按下一首=快进 3s/次,每 200ms 重复一次）
+ * - 表冠：旋转调音量
  */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
-fun PlayerScreen(vm: PlayerViewModel, onOpenLyrics: () -> Unit = {}) {
+fun WearPlayerScreen(vm: PlayerViewModel) {
     val tracks by vm.tracks.collectAsState()
     val index by vm.currentIndex.collectAsState()
     val isPlaying by vm.isPlaying.collectAsState()
     val position by vm.position.collectAsState()
     val duration by vm.duration.collectAsState()
     val volume by vm.volume.collectAsState()
-    val repeatMode by vm.repeatMode.collectAsState()
-    val speed by vm.speed.collectAsState()
     val favorites by vm.favorites.collectAsState()
     val current = tracks.getOrNull(index)
     val progress = if (duration > 0) position.toFloat() / duration.toFloat() else 0f
-    // 进度动画：使用 Wear 官方推荐的动画曲线，进度变化平滑不跳变
+
     val animatedProgress by animateFloatAsState(
         targetValue = progress,
         animationSpec = ProgressIndicatorDefaults.ProgressAnimationSpec,
         label = "playProgress"
     )
 
-    // 黑胶旋转：播放时匀速转，暂停冻结
+    // 顶部时钟
+    var now by remember { mutableStateOf(currentTimeText()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            now = currentTimeText()
+            delay(15_000)
+        }
+    }
+
+    // 专辑缓慢旋转（黑胶感），暂停时冻结
     val transition = rememberInfiniteTransition(label = "vinylRotation")
     val rotation by transition.animateFloat(
         initialValue = 0f,
         targetValue = 360f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 14000, easing = LinearEasing)
+            animation = tween(durationMillis = 16_000, easing = LinearEasing)
         ),
         label = "vinylAngle"
     )
@@ -102,16 +128,12 @@ fun PlayerScreen(vm: PlayerViewModel, onOpenLyrics: () -> Unit = {}) {
     LaunchedEffect(isPlaying, rotation) {
         if (isPlaying) frozenAngle = rotation
     }
-    val angle = if (isPlaying) rotation else frozenAngle
+    val coverAngle = if (isPlaying) rotation else frozenAngle
 
-    // 表冠调音量：顺时针增大
+    // 表冠调音量
     val focusRequester = remember { FocusRequester() }
     LaunchedEffect(Unit) {
-        try {
-            focusRequester.requestFocus()
-        } catch (t: Throwable) {
-            // ignore
-        }
+        try { focusRequester.requestFocus() } catch (_: Throwable) {}
     }
 
     val isFavorite = current != null && favorites.contains(current.id)
@@ -121,7 +143,7 @@ fun PlayerScreen(vm: PlayerViewModel, onOpenLyrics: () -> Unit = {}) {
             .fillMaxSize()
             .background(
                 Brush.radialGradient(
-                    colors = listOf(Color(0x1434C7F4), Color(0x00000000))
+                    colors = listOf(Color(0xFF1A1A1F), Color(0xFF0A0A0C))
                 )
             )
             .focusRequester(focusRequester)
@@ -129,138 +151,275 @@ fun PlayerScreen(vm: PlayerViewModel, onOpenLyrics: () -> Unit = {}) {
             .onRotaryScrollEvent { event ->
                 vm.setVolume(volume + event.verticalScrollPixels * 0.0015f)
                 true
-            },
-        contentAlignment = Alignment.Center
+            }
     ) {
-        // 贴合表圈的环形进度条（Wear 官方规范：顶部留 51° 间隙给时间/标题，
-        // 描边宽度与进度动画均用 ProgressIndicatorDefaults 的推荐值）
+        // =========== 背景层：当前曲目的专辑封面 + 模糊/暗化 ===========
+        AsyncImage(
+            model = current?.albumArtUri,
+            contentDescription = null,
+            modifier = Modifier
+                .fillMaxSize()
+                .then(blurModifier(28f)),
+            contentScale = ContentScale.Crop
+        )
+        // 全屏暗色 vignette：让前景元素读得清
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Brush.verticalGradient(colors = BG_VIGNETTE))
+        )
+
+        // =========== 弧形进度条：绕一圈,顶部留出时钟位置 ===========
         CircularProgressIndicator(
             progress = animatedProgress,
             modifier = Modifier.fillMaxSize(),
-            startAngle = 295.5f,
-            endAngle = 245.5f,
+            startAngle = 300f,
+            endAngle = 240f,
             indicatorColor = ACCENT,
-            trackColor = Color(0x22FFFFFF),
+            trackColor = Color(0x33FFFFFF),
             strokeWidth = ProgressIndicatorDefaults.StrokeWidth
         )
 
+        // =========== 顶部时间 ===========
+        Text(
+            text = now,
+            color = Color.White,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium,
+            textAlign = TextAlign.Center,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 4.dp)
+        )
+
+        // =========== 中部内容：圆形封面 + 标题 + 主控制 + 辅助 ===========
         Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.fillMaxWidth(0.78f)
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // 黑胶封面：旋转 + 中心孔；点击进入歌词页
+            Spacer(Modifier.height(8.dp))
+
+            // 圆形大封面 + 黑胶感
             Box(
                 modifier = Modifier
-                    .size(84.dp)
+                    .size(86.dp)
                     .clip(CircleShape)
-                    .background(Color(0x22FFFFFF))
-                    .clickable { onOpenLyrics() }
-                    .graphicsLayer { rotationZ = angle },
+                    .background(Color(0x55000000))
+                    .graphicsLayer { rotationZ = coverAngle },
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     Icons.Filled.MusicNote,
                     contentDescription = null,
-                    tint = ACCENT,
-                    modifier = Modifier.size(32.dp)
+                    tint = Color(0x5534C7F4),
+                    modifier = Modifier.size(34.dp)
                 )
                 AsyncImage(
                     model = current?.albumArtUri,
                     contentDescription = "专辑封面",
-                    modifier = Modifier.fillMaxSize().clip(CircleShape),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clip(CircleShape),
                     contentScale = ContentScale.Crop
                 )
                 // 黑胶中心孔
                 Box(
                     modifier = Modifier
-                        .size(14.dp)
+                        .size(10.dp)
                         .clip(CircleShape)
                         .background(Color(0xFF0B0B0B))
                 )
             }
 
-            Spacer(Modifier.height(6.dp))
-            Text(text = current?.title ?: "未选择音乐", fontSize = 13.sp, maxLines = 1)
+            Spacer(Modifier.height(8.dp))
             Text(
-                text = current?.artist ?: "在「音乐库」页选择",
-                fontSize = 10.sp,
-                color = Color.Gray,
-                maxLines = 1
+                text = current?.title ?: "未选择音乐",
+                color = Color.White,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                textAlign = TextAlign.Center
+            )
+            Text(
+                text = current?.artist ?: "在专辑流中选择",
+                color = Color(0xFFB8B8C8),
+                fontSize = 11.sp,
+                maxLines = 1,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(horizontal = 18.dp)
             )
 
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(10.dp))
 
-            // 主控制：上一首 / 播放暂停 / 下一首
+            // =========== 主控制：上一首 / 播放 / 下一首(长按可调进度) ===========
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                horizontalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                CompactButton(onClick = vm::prev) {
-                    Icon(Icons.Filled.SkipPrevious, contentDescription = "上一首")
-                }
-                Button(onClick = vm::togglePlay, modifier = Modifier.size(48.dp)) {
-                    Icon(
-                        if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                        contentDescription = if (isPlaying) "暂停" else "播放"
-                    )
-                }
-                CompactButton(onClick = vm::next) {
-                    Icon(Icons.Filled.SkipNext, contentDescription = "下一首")
-                }
+                LongPressSeekButton(
+                    isPrev = true,
+                    onClickOnce = { vm.prev() },
+                    onSeekDelta = { delta -> vm.seekBy(delta) }
+                )
+                CompactPlayPause(isPlaying = isPlaying, onToggle = vm::togglePlay)
+                LongPressSeekButton(
+                    isPrev = false,
+                    onClickOnce = { vm.next() },
+                    onSeekDelta = { delta -> vm.seekBy(delta) }
+                )
             }
 
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(8.dp))
 
-            // 辅助：播放模式 / 速度 / 收藏
+            // =========== 辅助行：耳机 / 收藏 / 喜欢 ===========
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceEvenly,
-                modifier = Modifier.fillMaxWidth()
+                horizontalArrangement = Arrangement.spacedBy(18.dp),
+                modifier = Modifier.padding(top = 2.dp)
             ) {
-                CompactButton(onClick = vm::cycleRepeatMode) {
-                    Text(
-                        text = when (repeatMode) {
-                            Player.REPEAT_MODE_ONE -> "单曲"
-                            Player.REPEAT_MODE_ALL -> "循环"
-                            else -> "顺序"
-                        },
-                        fontSize = 9.sp
-                    )
-                }
-                CompactButton(onClick = { vm.setSpeed(nextSpeed(speed)) }) {
-                    Text(text = "${"%.2f".format(speed).trimEnd('0').trimEnd('.')}x", fontSize = 9.sp)
-                }
-                CompactButton(
+                SmallIconAction(
+                    icon = Icons.Filled.Headphones,
+                    tint = Color(0xFFE5E5EE),
+                    onClick = { /* 预留：未来可跳到「输出设备」 */ }
+                )
+                SmallIconAction(
+                    icon = if (isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                    tint = if (isFavorite) Color(0xFFFF5A7A) else Color(0xFFE5E5EE),
                     onClick = { if (current != null) vm.toggleFavorite(current.id) }
-                ) {
-                    Icon(
-                        if (isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
-                        contentDescription = if (isFavorite) "取消收藏" else "收藏",
-                        tint = if (isFavorite) Color(0xFFFF5A7A) else Color.Gray
-                    )
-                }
+                )
+                SmallIconAction(
+                    icon = Icons.Filled.MusicNote,
+                    tint = Color(0xFFE5E5EE),
+                    onClick = { /* 预留：未来可跳到当前曲目的专辑 */ }
+                )
             }
 
             Spacer(Modifier.height(2.dp))
             Text(
-                text = "音量 ${(volume * 100).toInt()}% · ${formatMs(position)}/${formatMs(duration)}",
+                text = "${formatMs(position)} / ${formatMs(duration)}",
+                color = Color(0xFF9C9CAE),
                 fontSize = 9.sp,
-                color = Color.Gray,
                 textAlign = TextAlign.Center,
                 maxLines = 1
             )
+
+            Spacer(Modifier.height(8.dp))
         }
     }
 }
 
-/** 播放速度循环档位 */
-private fun nextSpeed(cur: Float): Float {
-    val steps = floatArrayOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
-    val next = steps.firstOrNull { it > cur + 0.01f }
-    return next ?: steps.first()
+/**
+ * 长按切歌键:
+ * - 单击 = 上一首/下一首
+ * - 长按 = 进入连续 seek 模式,每 200ms seek 一次
+ *
+ * 用 [MutableInteractionSource] 监听按下/抬起,按下立刻先一次明显 seek,后进入循环。
+ */
+@Composable
+private fun LongPressSeekButton(
+    isPrev: Boolean,
+    onClickOnce: () -> Unit,
+    onSeekDelta: (Long) -> Unit,
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scope = rememberCoroutineScope()
+    var repeatJob by remember { mutableStateOf<Job?>(null) }
+
+    LaunchedEffect(pressed) {
+        if (pressed) {
+            // 进入长按态:先来一次明显的 seek,接着每 200ms 再来一次
+            val step = if (isPrev) -3000L else 3000L
+            onSeekDelta(step)
+            repeatJob?.cancel()
+            repeatJob = scope.launch {
+                // 一点点启动延迟,避免误操作
+                delay(120)
+                while (true) {
+                    onSeekDelta(if (isPrev) -3000L else 3000L)
+                    delay(200)
+                }
+            }
+        } else {
+            repeatJob?.cancel()
+            repeatJob = null
+        }
+    }
+
+    CompactButton(
+        onClick = onClickOnce,
+        modifier = Modifier.size(36.dp),
+        interactionSource = interaction,
+    ) {
+        Icon(
+            imageVector = if (isPrev) Icons.Filled.SkipPrevious else Icons.Filled.SkipNext,
+            contentDescription = if (isPrev) "上一首（长按快退）" else "下一首（长按快进）",
+            modifier = Modifier.size(20.dp),
+            tint = Color.White
+        )
+    }
 }
 
+/** 播放/暂停按钮(居中主控),独立处理避免长按误触 */
+@Composable
+private fun CompactPlayPause(isPlaying: Boolean, onToggle: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(46.dp)
+            .clip(CircleShape)
+            .background(Color(0xFF1E1E24))
+            .clickable(onClick = onToggle),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+            contentDescription = if (isPlaying) "暂停" else "播放",
+            tint = ACCENT,
+            modifier = Modifier.size(26.dp)
+        )
+    }
+}
+
+/** 底部的「耳机 / 收藏 / 喜欢」图标按钮 */
+@Composable
+private fun SmallIconAction(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    tint: Color,
+    onClick: () -> Unit,
+) {
+    Icon(
+        imageVector = icon,
+        contentDescription = null,
+        tint = tint,
+        modifier = Modifier
+            .size(22.dp)
+            .clickable(onClick = onClick)
+    )
+}
+
+/** 当前时间字符串(HH:mm) */
+private fun currentTimeText(now: Date = Date()): String =
+    SimpleDateFormat("HH:mm", Locale.getDefault()).format(now)
+
+/** 像素格式化为 m:ss */
 private fun formatMs(ms: Long): String {
-    val s = ms / 1000
+    val s = (ms / 1000).coerceAtLeast(0)
     return "${s / 60}:${"%02d".format(s % 60)}"
+}
+
+/**
+ * 提供 RenderEffect 模糊修饰符（仅 API 31+ 生效,API < 31 走空 Modifier）。
+ * 调用方需保证元素宿主支持 RenderEffect(在 graphicsLayer 内)。
+ */
+@Composable
+private fun blurModifier(radiusDp: Float): Modifier {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return Modifier
+    val density = LocalDensity.current
+    val radiusPx = with(density) { radiusDp.dp.toPx() }
+    return Modifier.graphicsLayer {
+        renderEffect = RenderEffect
+            .createBlurEffect(radiusPx, radiusPx, Shader.TileMode.CLAMP)
+            .asComposeRenderEffect()
+    }
 }

@@ -3,33 +3,26 @@ package com.example.wearmusic.ui
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.Scaffold
 import com.example.wearmusic.PlayerViewModel
-import kotlinx.coroutines.launch
 
 /**
- * 表盘应用根：五页横向滑动
- * 0 = 播放器（正在播放）  1 = 歌词  2 = Cover Flow 专辑选曲  3 = 音乐库  4 = 音效与播放设置
- * Wear Compose 组件均对圆形表盘自适应；各列表页支持旋转表冠滚动。
+ * 表盘应用根：两页横向滑动
+ * 0 = 播放器（首页，圆形 iPod 风）  1 = Cover Flow 专辑选曲
+ *
+ * 精简选择：首页只露出播放器和专辑流两类核心入口，
+ * 其余（歌词/音乐库/音效）按需求从手表端移除，让首页就贴合图片所给的"圆形 iPod 播放器"。
+ * 专辑流通过横向滑动切换。
  */
 @Composable
 fun WearMusicApp(vm: PlayerViewModel) {
     WearMusicTheme {
-        val pagerState = rememberPagerState(pageCount = { 5 })
-        val scope = rememberCoroutineScope()
+        val pagerState = rememberPagerState(pageCount = { 2 })
         Scaffold {
             HorizontalPager(state = pagerState) { page ->
                 when (page) {
-                    0 -> PlayerScreen(
-                        vm = vm,
-                        onOpenLyrics = { scope.launch { pagerState.animateScrollToPage(1) } }
-                    )
-                    1 -> LyricsScreen(vm)
-                    2 -> AlbumCoverFlow(vm)
-                    3 -> FileManagerScreen(vm)
-                    4 -> AudioSettingsScreen(vm)
+                    0 -> WearPlayerScreen(vm = vm)
+                    else -> AlbumCoverFlow(vm)
                 }
             }
         }

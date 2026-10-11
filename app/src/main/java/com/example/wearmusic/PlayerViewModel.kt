@@ -201,6 +201,17 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         if (d > 0) controller?.seekTo((d * f).toLong())
     }
 
+    /**
+     * 相对当前位置 seek（前进/后退），供长按上一首/下一首调进度用。
+     * 自动钳制到 [0, duration]，避免溢出。
+     */
+    fun seekBy(deltaMs: Long) {
+        val c = controller ?: return
+        val d = if (c.duration > 0) c.duration else _duration.value
+        val target = (c.currentPosition + deltaMs).coerceIn(0L, d.coerceAtLeast(0L))
+        c.seekTo(target)
+    }
+
     fun setVolume(v: Float) {
         controller?.volume = v.coerceIn(0f, 1f)
         _volume.value = v.coerceIn(0f, 1f)

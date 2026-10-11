@@ -3,6 +3,7 @@ package com.example.wearmusic.coverflow
 import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -48,13 +49,20 @@ class CoverFlowState internal constructor(
     internal var geometry: Geometry? = null
 
     /**
-     * 带回弹（overshoot）的吸附动画 spec：中等阻尼比 + 中等刚度，
-     * 松手/点击后会轻微冲过中心再弹回，避免「生硬急停」。
+     * 平滑吸附 [AnimationSpec]：用「低回弹 + 中等刚度」的弹簧，
+     * 比起原本的 medium-bouncy，回弹幅度被压成极轻微的一抹余韵，
+     * 视觉上更"丝滑"而不是"q 弹"；同时刚度稍高使翻页响应更跟手。
      */
     private val bounceSpec: AnimationSpec<Float> = spring(
-        dampingRatio = Spring.DampingRatioMediumBouncy,
-        stiffness = Spring.StiffnessMedium,
+        dampingRatio = Spring.DampingRatioLowBouncy,
+        stiffness = Spring.StiffnessMediumLow,
     )
+
+    /**
+     * 兜底曲线：当上一次滚动还没有完成时再次触发，覆盖弹簧动画自身不接续的问题，
+     * 用 tween 平滑接力，避免出现"停一下再动"的卡顿。
+     */
+    private val fallbackSpec: AnimationSpec<Float> = tween(durationMillis = 260)
 
     /**
      * Index of the selected item. Set to -1 during scrolling.
@@ -84,11 +92,16 @@ class CoverFlowState internal constructor(
         return (sumW(listItemIndex) + w / 2f - center) - currentScroll
     }
 
-    /** 用带回弹的弹簧把列表滚动指定像素（fling / 点击 / 表冠共用）。 */
+    /** 用更丝滑的低回弹弹簧把列表滚动指定像素（fling / 点击 / 表冠共用）。 */
     fun flingSnap(deltaPx: Float) {
         if (geometry == null || deltaPx == 0f) return
         coroutineScope.launch {
-            lazyListState.animateScrollBy(deltaPx, bounceSpec)
+            // 若上一次动画在跑，无缝切换为 tween，避免两次弹簧叠加产生的"卡顿"
+            if (lazyListState.isScrollInProgress) {
+                lazyListState.animateScrollBy(deltaPx, fallbackSpec)
+            } else {
+                lazyListState.animateScrollBy(deltaPx, bounceSpec)
+            }
         }
     }
 
