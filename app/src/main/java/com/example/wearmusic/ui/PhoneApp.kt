@@ -59,6 +59,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -294,10 +295,10 @@ fun PhonePlayerScreen(
 
             Spacer(Modifier.height(14.dp))
 
-            // 主控制行
+            // 主控制行：切歌键小（56），播放键大（68）+ 蓝色填充
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(28.dp)
+                horizontalArrangement = Arrangement.spacedBy(30.dp)
             ) {
                 PhoneLongPressSeekButton(
                     isPrev = true,
@@ -306,17 +307,17 @@ fun PhonePlayerScreen(
                 )
                 Box(
                     modifier = Modifier
-                        .size(64.dp)
+                        .size(68.dp)
                         .clip(CircleShape)
-                        .background(Color(0xFF1E1E24))
+                        .background(ACCENT)
                         .clickable { vm.togglePlay() },
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                         contentDescription = if (isPlaying) "暂停" else "播放",
-                        tint = ACCENT,
-                        modifier = Modifier.size(34.dp)
+                        tint = Color.White,
+                        modifier = Modifier.size(36.dp)
                     )
                 }
                 PhoneLongPressSeekButton(
@@ -326,44 +327,39 @@ fun PhonePlayerScreen(
                 )
             }
 
-            Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.height(20.dp))
 
-            // 辅助行：播放模式 / 收藏 / 列表选曲
+            // 辅助行：播放模式 / 收藏 / 列表选曲（圆形底，统一尺寸 40dp）
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(36.dp),
+                horizontalArrangement = Arrangement.spacedBy(40.dp),
                 modifier = Modifier.padding(top = 4.dp)
             ) {
-                Icon(
-                    imageVector = when (playMode) {
+                PhoneSmallIconAction(
+                    icon = when (playMode) {
                         PlayMode.REPEAT_ONE -> Icons.Filled.RepeatOne
                         PlayMode.SHUFFLE -> Icons.Filled.Shuffle
                         PlayMode.SEQUENTIAL -> Icons.Filled.Repeat
                     },
-                    contentDescription = "播放模式：${playMode.label}",
-                    tint = if (playMode == PlayMode.SEQUENTIAL) Color(0xFFE5E5EE) else ACCENT,
-                    modifier = Modifier
-                        .size(28.dp)
-                        .clickable {
-                            vm.cyclePlayMode()
-                            modeHint = playMode.next().label
-                        }
+                    contentDesc = "播放模式：${playMode.label}",
+                    tint = if (playMode == PlayMode.SEQUENTIAL) Color(0xFF7A7A8C) else ACCENT,
+                    onClick = {
+                        val nextLabel = playMode.next().label
+                        vm.cyclePlayMode()
+                        modeHint = nextLabel
+                    }
                 )
-                Icon(
-                    imageVector = if (isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
-                    contentDescription = if (isFavorite) "取消收藏" else "收藏",
-                    tint = if (isFavorite) Color(0xFFFF5A7A) else Color(0xFFE5E5EE),
-                    modifier = Modifier
-                        .size(28.dp)
-                        .clickable { if (current != null) vm.toggleFavorite(current.id) }
+                PhoneSmallIconAction(
+                    icon = if (isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                    contentDesc = if (isFavorite) "取消收藏" else "收藏",
+                    tint = if (isFavorite) Color(0xFFFF5A7A) else Color(0xFFD5D5E0),
+                    onClick = { if (current != null) vm.toggleFavorite(current.id) }
                 )
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.QueueMusic,
-                    contentDescription = "列表选曲",
-                    tint = Color(0xFFE5E5EE),
-                    modifier = Modifier
-                        .size(28.dp)
-                        .clickable(onClick = onOpenTrackList)
+                PhoneSmallIconAction(
+                    icon = Icons.AutoMirrored.Filled.QueueMusic,
+                    contentDesc = "列表选曲",
+                    tint = Color(0xFFD5D5E0),
+                    onClick = onOpenTrackList
                 )
             }
 
@@ -378,6 +374,30 @@ fun PhonePlayerScreen(
 
             Spacer(Modifier.height(8.dp))
         }
+    }
+}
+
+/** 手机端辅助行小图标按钮（圆形底，统一 40dp） */
+@Composable
+private fun PhoneSmallIconAction(
+    icon: ImageVector,
+    contentDesc: String,
+    tint: Color,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .size(40.dp)
+            .clip(CircleShape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDesc,
+            tint = tint,
+            modifier = Modifier.size(24.dp)
+        )
     }
 }
 
