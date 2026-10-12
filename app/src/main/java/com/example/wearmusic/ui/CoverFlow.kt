@@ -2,6 +2,7 @@ package com.example.wearmusic.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -12,12 +13,13 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.foundation.focusable
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.rotary.onRotaryScrollEvent
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
+import androidx.wear.compose.foundation.rotary.RotaryScrollableDefaults
+import androidx.wear.compose.foundation.rotary.rotaryScrollable
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.wear.compose.material3.Icon
@@ -34,20 +36,12 @@ import com.example.wearmusic.coverflow.CoverFlowParams
 import com.example.wearmusic.coverflow.CoverFlowState
 import com.example.wearmusic.coverflow.rememberCoverFlowState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import kotlin.math.abs
-
-/**
- * 表冠（实体表冠 / 三星虚拟表冠）每翻动一张专辑所需累积的旋转像素阈值。
- * 低于该值不翻页，超过则按整数倍翻页数，保证「咔哒一格 = 翻一张」的手感。
- */
-private const val ROTARY_STEP_PX = 36f
 
 /**
  * 专辑选曲页（iPod Classic「Cover Flow」）—— 直接复用 GitHub 开源库 pakohan/compose-coverflow
@@ -104,33 +98,26 @@ fun AlbumCoverFlow(
         }
 
         // 表冠（转动手表表冠 / 三星虚拟表冠 翻动封面）；触摸滑动同样可用
-        val focusRequester = remember { FocusRequester() }
-        // 旋转累积量：按阈值换算成「翻一张」的步长，保证表冠每咔哒一格翻一张专辑
-        var rotaryAcc by remember { mutableFloatStateOf(0f) }
-        LaunchedEffect(Unit) {
-            try { focusRequester.requestFocus() } catch (_: Throwable) {}
-        }
+        val focusRequester = rememberRotaryFocusRequester()
+        // 官方表冠旋转逻辑：用 RotaryScrollableDefaults.behavior 直接驱动 Cover Flow 的 LazyRow
+        // （自动抢占焦点，实体/虚拟表冠通用）
+        val rotaryBehavior = RotaryScrollableDefaults.behavior(state.lazyListState)
+        // 下滑手势累积量：向下超过阈值即返回播放页
+        var dragDownAcc by remember { mutableFloatStateOf(0f) }
+        val density = LocalDensity.current
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .focusRequester(focusRequester)
-                .focusable()
-                .onRotaryScrollEvent { event ->
-                    rotaryAcc += event.verticalScrollPixels
-                    // 用可被观察的 centeredIndex 作为当前位置（state.selectedIndex 在动画中会滞后）
-                    var cur = if (centeredIndex >= 0) centeredIndex else 0
-                    while (abs(rotaryAcc) >= ROTARY_STEP_PX) {
-                        val dir = if (rotaryAcc > 0f) 1 else -1
-                        val next = (cur + dir).coerceIn(0, albums.lastIndex)
-                        rotaryAcc -= dir * ROTARY_STEP_PX
-                        if (next != cur) {
-                            cur = next
-                            state.scrollToItem(cur)
-                        } else {
-                            rotaryAcc = 0f
-                        }
-                    }
-                    true
+                .rotaryScrollable(rotaryBehavior, focusRequester)
+                // 下滑返回播放页（不与 Cover Flow 的横向翻动冲突）
+                .pointerInput(Unit) {
+                    detectVerticalDragGestures(
+                        onDragStart = { dragDownAcc = 0f },
+                        onDragEnd = {
+                            val threshold = with(density) { 60.dp.toPx() }
+                            if (dragDownAcc >= threshold) onBack()
+                        },
+                    ) { _, dragAmount -> dragDownAcc += dragAmount }
                 }
         ) {
             CoverFlow(
