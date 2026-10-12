@@ -1,54 +1,42 @@
 package com.example.wearmusic.ui
 
-import androidx.compose.foundation.focusable
-import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.input.rotary.onRotaryScrollEvent
 import androidx.wear.compose.foundation.lazy.ScalingLazyListState
-import kotlinx.coroutines.launch
+import androidx.wear.compose.foundation.rotary.RotaryScrollableDefaults
+import androidx.wear.compose.foundation.rotary.rotaryScrollable
 
 /**
- * 表冠（旋转输入）支持。
+ * 表冠（旋转输入）支持 —— 基于 Wear OS 官方 rotaryScrollable。
  *
- * Wear Compose 1.3.1 未提供 rotary 组件，这里直接基于 compose-ui 的
- * Modifier.onRotaryScrollEvent（androidx.compose.ui.input.rotary）实现：
- * 把表冠的滚动像素映射到列表滚动状态上。
+ * Wear Compose 1.6.2 通过 [RotaryScrollableDefaults.snapBehavior] 提供「按项吸附」的表冠行为
+ * （实体表冠 / 三星虚拟表冠通用），rotaryScrollable 内部用 FocusTargetWithSemantics
+ * 自动抢占焦点，因此表冠事件稳定生效，无需再手写 requestFocus 也能接收。
  */
 
-/** 创建并在进入页面时自动请求焦点的 FocusRequester（表冠事件需要焦点才能接收） */
+/** 创建并返回 FocusRequester，供 [rotaryScroll] 使用（官方 API 会据此自动抢占焦点）。 */
 @Composable
 fun rememberRotaryFocusRequester(): FocusRequester {
     val requester = remember { FocusRequester() }
+    // 兜底：显式请求一次焦点，确保进入页面即接收表冠事件（与官方内部抢占互补，不冲突）
     LaunchedEffect(Unit) {
         try {
             requester.requestFocus()
-        } catch (t: Throwable) {
-            // 节点尚未附加时请求焦点会失败，忽略即可
+        } catch (_: Throwable) {
         }
     }
     return requester
 }
 
-/** 让列表支持表冠滚动：需配合 rememberRotaryFocusRequester() 使用 */
-@OptIn(ExperimentalComposeUiApi::class)
+/** 让列表支持表冠滚动：基于 Wear OS 官方 rotaryScrollable（按项吸附，翻动歌词/列表）。 */
 @Composable
 fun Modifier.rotaryScroll(
     state: ScalingLazyListState,
-    focusRequester: FocusRequester
+    focusRequester: FocusRequester,
 ): Modifier {
-    val scope = rememberCoroutineScope()
-    return this
-        .focusRequester(focusRequester)
-        .focusable()
-        .onRotaryScrollEvent { event ->
-            scope.launch { state.scrollBy(event.verticalScrollPixels) }
-            true
-        }
+    val behavior = RotaryScrollableDefaults.snapBehavior(state)
+    return this.rotaryScrollable(behavior, focusRequester)
 }
