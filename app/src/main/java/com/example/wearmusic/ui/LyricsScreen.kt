@@ -8,6 +8,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -44,6 +45,10 @@ private val ACCENT = Color(0xFF34C7F4)
  * - 背景：强调色径向渐变，强化圆形表盘氛围
  * - 表冠：支持旋转表冠滚动歌词
  *
+ * 居中约定：滚动列表里【只有歌词行】（索引与 lyric 索引严格 1:1），
+ * 顶部的「▲ 选曲」入口是覆盖层、不计入列表，因此 animateScrollToItem(idx)
+ * 能把当前歌词行精确滚到屏幕正中，避免「差一位」导致的不居中。
+ *
  * @param onOpenAlbumFlow 顶部「选曲」入口：列表会吃掉垂直手势，这里补一个点击入口进入专辑流
  */
 @Composable
@@ -53,9 +58,9 @@ fun LyricsScreen(vm: PlayerViewModel, onOpenAlbumFlow: () -> Unit = {}) {
     val listState = rememberScalingLazyListState()
     val focusRequester = rememberRotaryFocusRequester()
 
-    // 当前行变化 → 平滑滚动并居中
-    LaunchedEffect(idx) {
-        if (idx in lyrics.indices) {
+    // 当前行变化 → 平滑滚动并居中（索引与歌词数组严格对应）
+    LaunchedEffect(idx, lyrics.size) {
+        if (lyrics.isNotEmpty() && idx in lyrics.indices) {
             listState.animateScrollToItem(idx)
         }
     }
@@ -88,26 +93,31 @@ fun LyricsScreen(vm: PlayerViewModel, onOpenAlbumFlow: () -> Unit = {}) {
                 flingBehavior = ScalingLazyColumnDefaults.snapFlingBehavior(state = listState),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                item {
-                    Text(
-                        text = "◀ 播放 · ▲ 选曲",
-                        color = Color(0x88FFFFFF),
-                        fontSize = 9.sp,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier
-                            .clickable(onClick = onOpenAlbumFlow)
-                    )
-                }
+                // 首尾留白：保证第一/最后一行也能滚到圆形屏正中、不被边缘裁切
+                item { Spacer(Modifier.height(28.dp)) }
                 items(lyrics.size) { i ->
                     LyricLine(text = lyrics[i].text, active = i == idx)
                 }
+                item { Spacer(Modifier.height(28.dp)) }
             }
         }
+
+        // 顶部「选曲」入口：独立覆盖层，不计入滚动列表，避免与歌词行索引错位
+        Text(
+            text = "▲ 选曲",
+            color = Color(0x88FFFFFF),
+            fontSize = 9.sp,
+            textAlign = TextAlign.Center,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 20.dp)
+                .clickable(onClick = onOpenAlbumFlow)
+        )
     }
     }
 }
 
-/** 单行歌词：缩放 / 颜色 / 透明度 / 字号全部走动画过渡 */
+/** 单行歌词：缩放 / 颜色 / 透明度 / 字号全部走动画过渡；满宽 + 居中保证水平居中 */
 @Composable
 private fun LyricLine(text: String, active: Boolean) {
     val scale by animateFloatAsState(
@@ -139,7 +149,8 @@ private fun LyricLine(text: String, active: Boolean) {
         fontSize = fontSize.sp,
         color = color,
         modifier = Modifier
-            .padding(vertical = 5.dp, horizontal = 10.dp)
+            .fillMaxWidth()
+            .padding(vertical = 5.dp, horizontal = 12.dp)
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
