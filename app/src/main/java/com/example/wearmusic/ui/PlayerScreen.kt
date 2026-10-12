@@ -181,6 +181,8 @@ fun WearPlayerScreen(
             // 安全圆直径：屏幕短边再内缩 edge，作为所有内容的边界
             val edge: Dp = (minOf(w, h) * 0.07f).coerceIn(10.dp, 20.dp)
             val d: Dp = minOf(w, h) - edge * 2f
+            // 大圆环直径：与 WearApp 表圈一致（屏幕短边 - 6dp，半径 = 短边/2 - 3dp）
+            val bigRingDiam: Dp = minOf(w, h) - 6.dp
 
             // —— 等比尺寸改为按安全圆直径 d 计算（带 min/max 钳制）——
             val playSize: Dp = (d * 0.22f).coerceIn(46.dp, 70.dp)
@@ -201,19 +203,19 @@ fun WearPlayerScreen(
                     .size(d)
                     .align(Alignment.Center),
             ) {
-                // 进度环内缩，避免贴着圆形屏幕边（Wear 标志性元素）
+                // 进度环：与外层大圆环（表圈）等大，沿圆形表盘边缘绘制
                 CircularProgressIndicator(
                     progress = { animatedProgress },
                     modifier = Modifier
-                        .fillMaxSize()
-                        .padding(8.dp),
+                        .size(bigRingDiam)
+                        .align(Alignment.Center),
                     startAngle = -90f,
                     endAngle = 270f,
                     colors = ProgressIndicatorDefaults.colors(
                         indicatorColor = ACCENT,
                         trackColor = Color(0x22FFFFFF),
                     ),
-                    strokeWidth = 4.dp,
+                    strokeWidth = 3.dp,
                     gapSize = 0.dp,
                 )
 
