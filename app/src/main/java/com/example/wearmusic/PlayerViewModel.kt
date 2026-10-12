@@ -212,6 +212,17 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * 跳到指定歌词时间戳并继续播放（点击歌词行从该句续播）。
+     * 若当前处于暂停状态则自动恢复播放。
+     */
+    fun seekToLyric(timeMs: Long) {
+        controller?.let {
+            it.seekTo(timeMs.coerceAtLeast(0L))
+            if (!it.isPlaying) it.play()
+        }
+    }
+
+    /**
      * 相对当前位置 seek（前进/后退），供长按上一首/下一首调进度用。
      * 自动钳制到 [0, duration]，避免溢出。
      */
