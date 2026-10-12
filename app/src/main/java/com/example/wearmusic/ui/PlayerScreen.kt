@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -58,6 +59,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.wear.compose.material3.CircularProgressIndicator
@@ -150,13 +152,13 @@ fun WearPlayerScreen(
                 ) { _, dragAmount -> swipeAcc += dragAmount }
             },
     ) {
-        // 1) 背景层：当前曲目专辑封面铺满全屏 + 模糊 + 暗化（专辑封面即背景）
+            // 1) 背景层：当前曲目专辑封面铺满全屏 + 模糊 + 暗化（专辑封面即背景）
         AsyncImage(
             model = current?.albumArtUri,
             contentDescription = null,
             modifier = Modifier
                 .fillMaxSize()
-                .then(blurModifier(30f)),
+                .then(blurModifier(16f)),
             contentScale = ContentScale.Crop,
         )
         Box(
@@ -185,8 +187,8 @@ fun WearPlayerScreen(
             val bigRingDiam: Dp = minOf(w, h) - 6.dp
 
             // —— 等比尺寸改为按安全圆直径 d 计算（带 min/max 钳制）——
-            val playSize: Dp = (d * 0.22f).coerceIn(46.dp, 70.dp)
-            val sideSize: Dp = (playSize * 0.74f)
+            val playSize: Dp = (d * 0.27f).coerceIn(56.dp, 84.dp)
+            val sideSize: Dp = (playSize * 0.78f)
             val bIconSize: Dp = (d * 0.060f).coerceIn(20.dp, 30.dp)
             val bIconInner: Dp = (bIconSize * 0.72f)
             val titleSp = (d.value * 0.034f).coerceIn(12f, 16f).sp
@@ -286,10 +288,12 @@ fun WearPlayerScreen(
                     Spacer(Modifier.weight(1.0f))
 
                     // 下半部分按钮（整体上移，落入安全圆内）
+                    // 移除「选专辑」按钮，剩余三键整体左移一点并居中（上滑屏幕仍可唤起选曲）
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(start = horizPad, end = horizPad),
+                            .padding(start = horizPad, end = horizPad)
+                            .offset { IntOffset((-10).dp.roundToPx(), 0) },
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.Center,
                     ) {
@@ -324,9 +328,6 @@ fun WearPlayerScreen(
                                 modeHint = nextLabel
                             },
                         )
-                        Spacer(Modifier.width(ctrlGap))
-                        // 专辑选取：上滑屏幕出现（点此提示亦可）
-                        SwipeUpHint(onClick = onOpenAlbumFlow)
                     }
 
                     // 底部缓冲：保证按钮不超出、不贴圆形边
@@ -334,32 +335,6 @@ fun WearPlayerScreen(
                 }
             }
         }
-    }
-}
-
-/** 上滑选专辑提示（点按亦可唤起 Cover Flow） */
-@Composable
-private fun SwipeUpHint(onClick: () -> Unit) {
-    Column(
-        modifier = Modifier
-            .clickable(onClick = onClick)
-            .padding(horizontal = 2.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
-        Text(
-            text = "︿",
-            color = Color(0xFFD5D5E0),
-            fontSize = 16.sp,
-            fontWeight = FontWeight.Bold,
-            textAlign = TextAlign.Center,
-        )
-        Text(
-            text = "选专辑",
-            color = Color(0xFF9090A4),
-            fontSize = 9.sp,
-            textAlign = TextAlign.Center,
-        )
     }
 }
 
