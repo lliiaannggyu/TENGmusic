@@ -46,7 +46,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -96,6 +95,7 @@ fun WearPlayerScreen(
     vm: PlayerViewModel,
     onOpenTrackList: () -> Unit,
     onOpenAlbumFlow: () -> Unit = {},
+    active: Boolean = true,
 ) {
     val tracks by vm.tracks.collectAsState()
     val index by vm.currentIndex.collectAsState()
@@ -113,10 +113,8 @@ fun WearPlayerScreen(
         label = "playProgress",
     )
 
-    val focusRequester = remember { FocusRequester() }
-    LaunchedEffect(Unit) {
-        try { focusRequester.requestFocus() } catch (_: Throwable) {}
-    }
+    // 仅当本页（播放页）为当前可见页时才持有表冠焦点，否则会把歌词/设置页的表冠事件偷走
+    val focusRequester = rememberRotaryFocusRequester(active)
 
     // 上滑手势累积位移（向上为负），超过阈值即唤起专辑选取
     var swipeAcc by remember { mutableFloatStateOf(0f) }
@@ -136,11 +134,18 @@ fun WearPlayerScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(Color(0xFF06070A))
-            .focusRequester(focusRequester)
-            .focusable()
-            .onRotaryScrollEvent { event ->
-                vm.setVolume((volume + event.verticalScrollPixels * 0.0015f).coerceIn(0f, 1f))
-                true
+            .let { m ->
+                if (active) {
+                    // 仅当前页：表冠调音量 + 接收焦点
+                    m.focusRequester(focusRequester)
+                        .focusable()
+                        .onRotaryScrollEvent { event ->
+                            vm.setVolume((volume + event.verticalScrollPixels * 0.0015f).coerceIn(0f, 1f))
+                            true
+                        }
+                } else {
+                    m
+                }
             }
             .pointerInput(Unit) {
                 detectVerticalDragGestures(
@@ -183,8 +188,8 @@ fun WearPlayerScreen(
             // 安全圆直径：屏幕短边再内缩 edge，作为所有内容的边界
             val edge: Dp = (minOf(w, h) * 0.07f).coerceIn(10.dp, 20.dp)
             val d: Dp = minOf(w, h) - edge * 2f
-            // 大圆环直径：与 WearApp 表圈一致（屏幕短边 - 6dp，半径 = 短边/2 - 3dp）
-            val bigRingDiam: Dp = minOf(w, h) - 6.dp
+            // 大圆环直径：紧贴圆形屏幕边缘（短边 - 3dp，stroke 3dp 居中后外缘正好落在屏边）
+            val bigRingDiam: Dp = minOf(w, h) - 3.dp
 
             // —— 等比尺寸改为按安全圆直径 d 计算（带 min/max 钳制）——
             val playSize: Dp = (d * 0.27f).coerceIn(56.dp, 84.dp)
