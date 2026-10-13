@@ -17,15 +17,22 @@ import androidx.wear.compose.foundation.rotary.rotaryScrollable
  * 自动抢占焦点，因此表冠事件稳定生效，无需再手写 requestFocus 也能接收。
  */
 
-/** 创建并返回 FocusRequester，供 [rotaryScroll] 使用（官方 API 会据此自动抢占焦点）。 */
+/**
+ * 创建并返回 FocusRequester，供 [rotaryScroll] / [androidx.compose.ui.input.rotary.onRotaryScrollEvent] 使用
+ * （官方 API 会据此自动抢占焦点）。
+ *
+ * @param active 仅当页面/浮层真正可见时才主动抢占焦点。横向翻页（播放 / 歌词 / 设置）三页同在组合树中，
+ *   必须靠该开关保证「只有当前页」持有表冠焦点，否则上一页会一直偷走表冠事件。
+ */
 @Composable
-fun rememberRotaryFocusRequester(): FocusRequester {
+fun rememberRotaryFocusRequester(active: Boolean = true): FocusRequester {
     val requester = remember { FocusRequester() }
-    // 兜底：显式请求一次焦点，确保进入页面即接收表冠事件（与官方内部抢占互补，不冲突）
-    LaunchedEffect(Unit) {
-        try {
-            requester.requestFocus()
-        } catch (_: Throwable) {
+    LaunchedEffect(active) {
+        if (active) {
+            try {
+                requester.requestFocus()
+            } catch (_: Throwable) {
+            }
         }
     }
     return requester
