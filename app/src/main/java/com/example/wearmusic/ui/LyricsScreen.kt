@@ -7,7 +7,6 @@ import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -49,11 +48,15 @@ private val ACCENT = Color(0xFF34C7F4)
  * - 顶部「▲ 选曲」入口：覆盖层，点击进入专辑流
  */
 @Composable
-fun LyricsScreen(vm: PlayerViewModel, onOpenAlbumFlow: () -> Unit = {}) {
+fun LyricsScreen(
+    vm: PlayerViewModel,
+    onOpenAlbumFlow: () -> Unit = {},
+    active: Boolean = true,
+) {
     val lyrics by vm.lyrics.collectAsState()
     val idx by vm.lyricIndex.collectAsState()
     val listState = rememberScalingLazyListState()
-    val focusRequester = rememberRotaryFocusRequester()
+    val focusRequester = rememberRotaryFocusRequester(active)
 
     // 当前行变化 → 平滑滚动并居中（索引与歌词数组严格对应，无偏移）
     LaunchedEffect(idx, lyrics.size) {
@@ -85,12 +88,13 @@ fun LyricsScreen(vm: PlayerViewModel, onOpenAlbumFlow: () -> Unit = {}) {
                 contentPadding = PaddingValues(horizontal = 10.dp),
                 modifier = Modifier
                     .fillMaxSize()
-                    .rotaryScroll(listState, focusRequester),
+                    .let { m -> if (active) m.rotaryScroll(listState, focusRequester) else m },
                 flingBehavior = ScalingLazyColumnDefaults.snapFlingBehavior(state = listState),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // 首尾留白：保证第一/最后一行也能滚到圆形屏正中
-                item { Spacer(Modifier.height(28.dp)) }
+                // 注意：列表里只有歌词行（无首尾 spacer），故列表下标 == 歌词下标，
+                // animateScrollToItem(idx) 才能把当前行精确滚到圆形屏正中（之前多出的 spacer
+                // 让下标错开一位，导致整页歌词都偏下）。
                 items(lyrics.size) { i ->
                     LyricLine(
                         text = lyrics[i].text,
@@ -98,7 +102,6 @@ fun LyricsScreen(vm: PlayerViewModel, onOpenAlbumFlow: () -> Unit = {}) {
                         onClick = { vm.seekToLyric(lyrics[i].timeMs) },
                     )
                 }
-                item { Spacer(Modifier.height(28.dp)) }
             }
         }
 
