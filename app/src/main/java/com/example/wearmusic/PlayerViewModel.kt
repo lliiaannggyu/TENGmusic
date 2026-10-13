@@ -99,6 +99,10 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     private var sleepJob: Job? = null
 
     init {
+        // 预置默认 5 段均衡器（低频→高频），保证「音效」页未播放时也能看到并手动调节，
+        // 而不是只剩一个开/关开关。真实频段会在首次播放 attach 后用设备值覆盖。
+        _eqFreqs.value = listOf(60, 230, 910, 3600, 14000)
+        _eqGains.value = List(5) { 0 }
         viewModelScope.launch(Dispatchers.IO) {
             val loaded = AudioRepository.loadTracks(getApplication())
             _tracks.value = loaded
@@ -150,16 +154,22 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** 均衡器就绪后同步频段与默认增益 */
+    /** 均衡器就绪后同步频段与默认增益（保留用户已调的增益，避免每次轮询都被重置） */
     private fun syncEq() {
         val count = AudioEffects.bandCount
-        if (count > 0 && _eqFreqs.value.size != count) {
-            _eqFreqs.value = AudioEffects.centerFreqsHz
-            val gains = List(count) { i ->
-                EqPresets.ALL.first().gains.getOrElse(i) { 0 }
+        if (count > 0) {
+            val prevGains = _eqGains.value
+            if (_eqFreqs.value.size != count) {
+                _eqFreqs.value = AudioEffects.centerFreqsHz
+                // 频段数一致则沿用用户增益；否则退回预设默认
+                val gains = if (prevGains.size == count) {
+                    prevGains
+                } else {
+                    List(count) { i -> EqPresets.ALL.first().gains.getOrElse(i) { 0 } }
+                }
+                _eqGains.value = gains
+                gains.forEachIndexed { i, g -> AudioEffects.setBandLevel(i, g) }
             }
-            _eqGains.value = gains
-            gains.forEachIndexed { i, g -> AudioEffects.setBandLevel(i, g) }
             AudioEffects.setEnabled(_eqEnabled.value)
         }
     }
