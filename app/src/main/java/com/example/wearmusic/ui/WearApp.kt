@@ -39,6 +39,8 @@ fun WearMusicApp(vm: PlayerViewModel) {
                 val pager = rememberPagerState(pageCount = { 3 })
                 var showTrackList by remember { mutableStateOf(false) }
                 var showAlbumFlow by remember { mutableStateOf(false) }
+                // 当前可见页：横向翻页三页同在组合树，靠它决定哪一页「独占」表冠焦点
+                val currentPage = pager.currentPage
 
                 HorizontalPager(
                     state = pager,
@@ -49,9 +51,18 @@ fun WearMusicApp(vm: PlayerViewModel) {
                             vm = vm,
                             onOpenTrackList = { showTrackList = true },
                             onOpenAlbumFlow = { showAlbumFlow = true },
+                            active = currentPage == 0,
                         )
-                        1 -> LyricsScreen(vm = vm, onOpenAlbumFlow = { showAlbumFlow = true })
-                        else -> AudioSettingsScreen(vm = vm, onOpenAlbumFlow = { showAlbumFlow = true })
+                        1 -> LyricsScreen(
+                            vm = vm,
+                            onOpenAlbumFlow = { showAlbumFlow = true },
+                            active = currentPage == 1,
+                        )
+                        else -> AudioSettingsScreen(
+                            vm = vm,
+                            onOpenAlbumFlow = { showAlbumFlow = true },
+                            active = currentPage == 2,
+                        )
                     }
                 }
 
