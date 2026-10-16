@@ -33,7 +33,7 @@
 
 ## Cover Flow 说明
 
-专辑流基于开源库 **[compose-coverflow](https://github.com/pakohan/compose-coverflow)**（MIT，Patrick Kohan）移植而来，位于 `com/example/wearmusic/coverflow/`：
+专辑流基于开源库 **[compose-coverflow](https://github.com/pakohan/compose-coverflow)**（MIT，Patrick Kohan）移植而来，位于 `com/tengwear/tengmusic/coverflow/`：
 
 - 几何/倒影算法原样保留
 - 为适配 Compose 1.6.7 做了最小改动（去掉 `@Parcelize`、`Dp` 换算、自定义回弹 fling）
@@ -51,4 +51,6 @@
 
 ## 许可
 
-MIT，详见 [LICENSE](LICENSE)。内含对 pakohan/compose-coverflow 的第三方声明。
+**AGPL-3.0**，详见 [LICENSE](LICENSE)。
+
+> 本项目整体以 GNU Affero General Public License v3.0 发布。其中内嵌移植的 **compose-coverflow**（位于 `com/tengwear/tengmusic/coverflow/`）仍保留其原始 **MIT** 许可，相关著作权归属于 Patrick Kohan，按 MIT 条款使用。
