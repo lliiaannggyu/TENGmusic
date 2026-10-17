@@ -1,6 +1,7 @@
 package com.tengwear.tengmusic.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -40,7 +42,6 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.rotary.onRotaryScrollEvent
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -53,34 +54,51 @@ import androidx.wear.compose.material3.ListHeader
 import androidx.wear.compose.material3.Text
 import com.tengwear.tengmusic.CategoryRepository
 import com.tengwear.tengmusic.PlayerViewModel
+import com.tengwear.tengmusic.Track
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.abs
+import kotlin.math.roundToInt
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 
 private val CAT_BG = Color(0xF20B0B0E)
-private val CAT_ACCENT = Color(0xFF34C7F4)
+
+/** 归类列表的两种模式：播放（默认）/ 把当前歌加入类别（双击歌名唤起） */
+enum class CategoryListMode { PLAY, ASSIGN }
 
 /**
  * 归类列表（双击歌名 / 点底部「归类」键唤起）：
- * - 内置「全部歌曲」「收藏」与用户自定义类别，显示各自歌曲数
- * - 点击类别：开始播放该归类，并回到播放器
- * - 底部加号：用系统键盘命名新增自定义类别
- * - 长按类别（按住不动）弹出删除确认（仅自定义类别可删）
- * - 拖动排序：必须长按之后才允许上下拖动（未长按的滑动一律视为滚动列表）
- * - 支持旋转表冠滚动列表
+ *
+ * - **播放模式**（点播放器底部「归类」键）：
+ *   - 点击类别 = 播放该归类并回到播放器；
+ *   - 长按不动 700ms 再松手 = 弹出删除确认（仅自定义类别可删）；
+ *   - 长按后上下拖动 = 排序（跟手移动 + 目标高亮，松手才一次性交换，不闪跳）；
+ *   - 「新增类别」按钮位于列表末尾，跟着列表一起滚动；
+ *   - 列表容器为圆角胶囊（RoundedCornerShape 50%）。
+ * - **归类模式**（双击播放器顶部歌名）：
+ *   - 点击类别 = 把当前曲目加入该类别（收藏 = 收藏开关，已加入的再点一次 = 移出）；
+ *   - 不提供排序/删除（避免误操作）。
+ *
+ * 组件颜色跟随主题强调色（歌词色：专辑主色或用户自定义色）。
  */
 @Composable
-fun CategoryListScreen(vm: PlayerViewModel, onClose: () -> Unit) {
+fun CategoryListScreen(
+    vm: PlayerViewModel,
+    onClose: () -> Unit,
+    mode: CategoryListMode = CategoryListMode.PLAY,
+    assignTrack: Track? = null,
+) {
     val cats by vm.categories.collectAsState()
     val tracks by vm.tracks.collectAsState()
     val favorites by vm.favorites.collectAsState()
+    val lyricColor by vm.lyricColor.collectAsState()
+    val accent = Color(lyricColor)
     val listState = rememberScalingLazyListState()
     val fr = remember { FocusRequester() }
     val scope = rememberCoroutineScope()
@@ -90,8 +108,11 @@ fun CategoryListScreen(vm: PlayerViewModel, onClose: () -> Unit) {
     val nameFr = remember { FocusRequester() }
     var draggingId by remember { mutableStateOf<String?>(null) }
     var dragOffset by remember { mutableStateOf(0f) }
+    var targetIndex by remember { mutableStateOf<Int?>(null) }
     var longJob by remember { mutableStateOf<Job?>(null) }
     var rotaryAcc by remember { mutableStateOf(0f) }
+    // 归类模式的操作反馈（短暂显示后自动关闭）
+    var assignMsg by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
         try { fr.requestFocus() } catch (_: Throwable) {}
@@ -102,7 +123,7 @@ fun CategoryListScreen(vm: PlayerViewModel, onClose: () -> Unit) {
             modifier = Modifier.fillMaxSize(),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            // 标题栏：返回 + 标题
+            // 标题栏：返回 + 标题（归类模式显示待加入的歌曲名）
             Row(
                 Modifier.fillMaxWidth().padding(10.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -114,11 +135,25 @@ fun CategoryListScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                     tint = Color.White,
                     modifier = Modifier.size(18.dp).clickable(onClick = onClose),
                 )
-                Text("归类", fontSize = 14.sp, color = Color.White)
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = if (mode == CategoryListMode.ASSIGN) "添加到归类" else "归类",
+                        fontSize = 14.sp,
+                        color = Color.White,
+                    )
+                    if (mode == CategoryListMode.ASSIGN && assignTrack != null) {
+                        Text(
+                            text = assignTrack.title,
+                            fontSize = 8.sp,
+                            color = accent,
+                            maxLines = 1,
+                        )
+                    }
+                }
                 Spacer(Modifier.width(18.dp))
             }
 
-            // 列表（Wear M3E：ScalingLazyColumn + ListHeader + Card 行）
+            // 列表（Wear M3E：ScalingLazyColumn + ListHeader + 胶囊 Card 行）
             ScalingLazyColumn(
                 state = listState,
                 modifier = Modifier
@@ -141,10 +176,17 @@ fun CategoryListScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                     val cat = cats[i]
                     val count = cat.count(tracks, favorites)
                     val isDragging = draggingId == cat.id
+                    val isTarget = mode == CategoryListMode.PLAY &&
+                        targetIndex == i && draggingId != null && draggingId != cat.id
+                    // 归类模式：标记当前歌已在类别中的项
+                    val inCat = mode == CategoryListMode.ASSIGN && assignTrack != null &&
+                        (cat.id == CategoryRepository.ID_FAV && favorites.contains(assignTrack.id) ||
+                            (!cat.isBuiltIn && cat.trackIds.contains(assignTrack.id)))
                     Card(
-                        // 点击交互全部由下方 awaitEachGesture 统一处理：
-                        // 纯点击 = 播放；长按不动 = 删除确认；长按后才可拖动排序；
+                        // 点击交互全部由下方 awaitEachGesture 统一处理（播放模式）：
+                        // 纯点击 = 播放；长按不动 = 删除确认（松手才弹）；长按后才可拖动排序；
                         // 未长按的滑动不消费、放行给列表滚动。
+                        // 归类模式：点击 = 把当前歌加入/移出该类别。
                         onClick = {},
                         onLongClick = {},
                         modifier = Modifier
@@ -156,93 +198,159 @@ fun CategoryListScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                                     Modifier
                                 }
                             )
-                            .pointerInput(cat.id) {
-                                awaitEachGesture {
-                                    val down = awaitFirstDown(requireUnconsumed = false)
-                                    // 不 consume down：保证未长按的滑动能正常滚动列表；
-                                    // 只有「长按后的拖动」才 consume，把列表滚动压掉。
-                                    val downY = down.position.y
-                                    var longPressFired = false
-                                    var dragMoved = false
-                                    var movedEarly = false
-                                    dragOffset = 0f
-                                    longJob?.cancel()
-                                    // 长按计时：按住不动 450ms 才进入「可拖动/删除」态，
-                                    // 避免"碰一下就拖"（滑一下即拖动）的误触。
-                                    longJob = scope.launch {
-                                        delay(450)
-                                        if (!dragMoved && !movedEarly) {
-                                            longPressFired = true
-                                            draggingId = cat.id
-                                            showDeleteId = cat.id
+                            .then(
+                                if (isTarget) {
+                                    Modifier.border(1.5.dp, accent, RoundedCornerShape(percent = 50))
+                                } else {
+                                    Modifier
+                                }
+                            )
+                            .pointerInput(cat.id, mode) {
+                                if (mode == CategoryListMode.ASSIGN) {
+                                    // 归类模式：纯点击即加入，无长按/拖动
+                                    awaitEachGesture {
+                                        val down = awaitFirstDown(requireUnconsumed = false)
+                                        down.consume()
+                                        while (true) {
+                                            val event = awaitPointerEvent()
+                                            val change = event.changes
+                                                .firstOrNull { it.id == down.id } ?: break
+                                            if (change.changedToUp()) {
+                                                val track = assignTrack
+                                                if (track != null) {
+                                                    when {
+                                                        cat.id == CategoryRepository.ID_FAV -> {
+                                                            vm.toggleFavorite(track.id)
+                                                            assignMsg =
+                                                                if (favorites.contains(track.id)) "已取消收藏"
+                                                                else "已收藏"
+                                                        }
+                                                        cat.isBuiltIn -> {
+                                                            // 全部歌曲：无需单曲加入
+                                                            assignMsg = "全部歌曲包含所有曲目"
+                                                        }
+                                                        cat.trackIds.contains(track.id) -> {
+                                                            vm.removeTrackFromCategory(track.id, cat.id)
+                                                            assignMsg = "已移出：${cat.name}"
+                                                        }
+                                                        else -> {
+                                                            val ok = vm.addTrackToCategory(track.id, cat.id)
+                                                            assignMsg =
+                                                                if (ok) "已加入：${cat.name}" else "加入失败"
+                                                        }
+                                                    }
+                                                    scope.launch {
+                                                        delay(650)
+                                                        onClose()
+                                                    }
+                                                }
+                                                break
+                                            }
                                         }
                                     }
-                                    var lastY = downY
-                                    while (true) {
-                                        val event = awaitPointerEvent()
-                                        val change = event.changes
-                                            .firstOrNull { it.id == down.id } ?: break
-                                        if (change.changedToUp()) {
-                                            longJob?.cancel()
-                                            when {
-                                                // 拖动排序结束：不播放、不删除
-                                                dragMoved -> {}
-                                                // 长按已触发删除确认：松手不做额外动作
-                                                longPressFired -> {}
-                                                // 长按前就滑动：视为滚动列表意图，不播放
-                                                movedEarly -> {}
-                                                // 纯点击：播放该归类（修复"点击只弹删除"）
-                                                else -> {
-                                                    vm.playCategory(cat.id)
-                                                    onClose()
-                                                }
+                                } else {
+                                    awaitEachGesture {
+                                        val down = awaitFirstDown(requireUnconsumed = false)
+                                        // 不 consume down：保证未长按的滑动能正常滚动列表；
+                                        // 只有「长按后的拖动」才 consume，把列表滚动压掉。
+                                        val downY = down.position.y
+                                        var longPressFired = false
+                                        var dragMoved = false
+                                        var movedEarly = false
+                                        dragOffset = 0f
+                                        targetIndex = null
+                                        longJob?.cancel()
+                                        // 长按计时：按住不动 700ms 才进入「可拖动/删除」态，
+                                        // 避免"碰一下就拖"（滑一下即拖动）的误触。
+                                        longJob = scope.launch {
+                                            delay(700)
+                                            if (!dragMoved && !movedEarly) {
+                                                longPressFired = true
+                                                draggingId = cat.id
                                             }
-                                            draggingId = null
-                                            dragOffset = 0f
-                                            dragMoved = false
-                                            break
                                         }
-                                        val dy = change.position.y - lastY
-                                        lastY = change.position.y
-                                        if (longPressFired) {
-                                            // 长按已触发：先消费全部移动，阻止列表滚动抢事件
-                                            change.consume()
-                                            if (showDeleteId == cat.id) showDeleteId = null
-                                            if (!dragMoved && abs(dy) > 6f) dragMoved = true
-                                        } else if (!dragMoved &&
-                                            abs(change.position.y - downY) > 8f
-                                        ) {
-                                            // 长按前滑动：取消长按，标记为"提前滑动"，不排序
-                                            movedEarly = true
-                                            longJob?.cancel()
-                                        }
-                                        if (dragMoved) {
-                                            dragOffset += dy
-                                            // 按 id 实时查当前下标（排序后下标已变，不能用捕获的 i）
-                                            val ids = vm.categories.value.map { it.id }
-                                            val from = ids.indexOf(cat.id)
-                                            val info = listState.layoutInfo.visibleItemsInfo
-                                                .firstOrNull { it.index == from }
-                                            val itemH = (info?.size?.toFloat() ?: 60f)
-                                            while (abs(dragOffset) > itemH / 2f && from >= 0) {
-                                                val dir = if (dragOffset > 0f) 1 else -1
-                                                val to = (from + dir).coerceIn(0, ids.lastIndex)
-                                                if (to == from) {
-                                                    dragOffset = 0f
-                                                    break
+                                        var lastY = downY
+                                        while (true) {
+                                            val event = awaitPointerEvent()
+                                            val change = event.changes
+                                                .firstOrNull { it.id == down.id } ?: break
+                                            if (change.changedToUp()) {
+                                                longJob?.cancel()
+                                                when {
+                                                    // 拖动排序结束：松手才一次性交换（跟手过程不改数据，杜绝闪跳）
+                                                    dragMoved -> {
+                                                        val ids = vm.categories.value.map { it.id }
+                                                        val from = ids.indexOf(cat.id)
+                                                        val to = targetIndex
+                                                        if (from >= 0 && to != null && to != from &&
+                                                            to in ids.indices
+                                                        ) {
+                                                            vm.reorderCategories(
+                                                                ids.toMutableList()
+                                                                    .also { it.add(to, it.removeAt(from)) }
+                                                            )
+                                                        }
+                                                    }
+                                                    // 长按后未移动就松手：弹出删除确认
+                                                    longPressFired -> {
+                                                        showDeleteId = cat.id
+                                                    }
+                                                    // 长按前就滑动：视为滚动列表意图，不播放
+                                                    movedEarly -> {}
+                                                    // 纯点击：播放该归类
+                                                    else -> {
+                                                        vm.playCategory(cat.id)
+                                                        onClose()
+                                                    }
                                                 }
-                                                vm.reorderCategories(
-                                                    ids.toMutableList()
-                                                        .also { it.add(to, it.removeAt(from)) }
-                                                )
-                                                dragOffset -= dir * itemH
+                                                draggingId = null
+                                                dragOffset = 0f
+                                                targetIndex = null
+                                                dragMoved = false
+                                                break
+                                            }
+                                            val dy = change.position.y - lastY
+                                            lastY = change.position.y
+                                            if (longPressFired) {
+                                                // 长按已触发：先消费全部移动，阻止列表滚动抢事件
+                                                change.consume()
+                                                if (!dragMoved && abs(dy) > 6f) dragMoved = true
+                                            } else if (!dragMoved &&
+                                                abs(change.position.y - downY) > 8f
+                                            ) {
+                                                // 长按前滑动：取消长按，标记为"提前滑动"，不排序
+                                                movedEarly = true
+                                                longJob?.cancel()
+                                            }
+                                            if (dragMoved) {
+                                                // 跟手：只更新位移与目标高亮，不立刻改数据
+                                                val ids = vm.categories.value.map { it.id }
+                                                val from = ids.indexOf(cat.id)
+                                                if (from >= 0) {
+                                                    val info = listState.layoutInfo.visibleItemsInfo
+                                                        .firstOrNull { it.index == from }
+                                                    val itemH = info?.size?.toFloat() ?: 62f
+                                                    // 位移夹取在邻居范围内，防止一次跳多格
+                                                    val maxOff = (ids.size - 1 - from).coerceAtLeast(0) * itemH
+                                                    val minOff = -from * itemH
+                                                    dragOffset = (dragOffset + dy)
+                                                        .coerceIn(minOff.toFloat(), maxOff.toFloat())
+                                                    targetIndex =
+                                                        (from + (dragOffset / itemH).roundToInt())
+                                                            .coerceIn(0, ids.lastIndex)
+                                                }
                                             }
                                         }
                                     }
                                 }
                             },
+                        shape = RoundedCornerShape(percent = 50),
                         colors = CardDefaults.cardColors(
-                            containerColor = if (isDragging) Color(0x44234A5E) else Color(0xF20B0B0E),
+                            containerColor = when {
+                                isDragging -> accent.copy(alpha = 0.22f)
+                                isTarget -> accent.copy(alpha = 0.12f)
+                                else -> CAT_BG
+                            },
                             contentColor = Color.White,
                         ),
                     ) {
@@ -256,52 +364,91 @@ fun CategoryListScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                                 Text(
                                     text = cat.name,
                                     fontSize = 13.sp,
-                                    color = if (isDragging) CAT_ACCENT else Color.White,
+                                    color = if (isDragging) accent else Color.White,
                                 )
                                 Text(
-                                    text = "${if (cat.isBuiltIn) "内置" else "自定义"} · $count 首",
+                                    text = if (mode == CategoryListMode.ASSIGN) {
+                                        if (inCat) "已在其中 · $count 首" else "$count 首"
+                                    } else {
+                                        "${if (cat.isBuiltIn) "内置" else "自定义"} · $count 首"
+                                    },
                                     fontSize = 9.sp,
-                                    color = Color.Gray,
+                                    color = if (inCat) accent else Color.Gray,
                                 )
                             }
-                            if (cat.isBuiltIn) {
-                                Icon(
-                                    imageVector = Icons.Filled.Favorite,
-                                    contentDescription = null,
-                                    tint = CAT_ACCENT,
-                                    modifier = Modifier.size(14.dp),
-                                )
-                            } else {
-                                Icon(
-                                    imageVector = Icons.Filled.LibraryMusic,
-                                    contentDescription = null,
-                                    tint = Color.Gray,
-                                    modifier = Modifier.size(14.dp),
-                                )
+                            when {
+                                mode == CategoryListMode.ASSIGN && inCat -> {
+                                    Icon(
+                                        imageVector = Icons.Filled.Check,
+                                        contentDescription = "已在其中",
+                                        tint = accent,
+                                        modifier = Modifier.size(16.dp),
+                                    )
+                                }
+                                cat.id == CategoryRepository.ID_FAV -> {
+                                    Icon(
+                                        imageVector = Icons.Filled.Favorite,
+                                        contentDescription = null,
+                                        tint = accent,
+                                        modifier = Modifier.size(14.dp),
+                                    )
+                                }
+                                else -> {
+                                    Icon(
+                                        imageVector = Icons.Filled.LibraryMusic,
+                                        contentDescription = null,
+                                        tint = Color.Gray,
+                                        modifier = Modifier.size(14.dp),
+                                    )
+                                }
                             }
+                        }
+                    }
+                }
+
+                // 「新增类别」按钮：放在列表末尾，跟着列表一起滚动（播放模式才显示）
+                if (mode == CategoryListMode.PLAY) {
+                    item {
+                        Button(
+                            onClick = {
+                                name = ""
+                                showNaming = true
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth(0.62f)
+                                .padding(vertical = 8.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Add,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text("新增类别", fontSize = 11.sp)
                         }
                     }
                 }
                 item { Spacer(Modifier.height(8.dp)) }
             }
 
-            // 底部加号：新增自定义类别（M3E Button）
-            Button(
-                onClick = {
-                    name = ""
-                    showNaming = true
-                },
-                modifier = Modifier
-                    .fillMaxWidth(0.62f)
-                    .padding(vertical = 8.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Add,
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp),
-                )
-                Spacer(Modifier.width(4.dp))
-                Text("新增类别", fontSize = 11.sp)
+            // 归类模式操作反馈（底部短提示）
+            val msg = assignMsg
+            if (mode == CategoryListMode.ASSIGN && msg != null) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 6.dp)
+                        .background(accent.copy(alpha = 0.20f), CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = msg,
+                        fontSize = 10.sp,
+                        color = Color.White,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                    )
+                }
             }
         }
 
@@ -342,7 +489,7 @@ fun CategoryListScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                             modifier = Modifier.clickable { showNaming = false },
                         )
                         Text(
-                            "添加", fontSize = 12.sp, color = CAT_ACCENT,
+                            "添加", fontSize = 12.sp, color = accent,
                             modifier = Modifier.clickable {
                                 vm.addCategory(name.trim())
                                 showNaming = false

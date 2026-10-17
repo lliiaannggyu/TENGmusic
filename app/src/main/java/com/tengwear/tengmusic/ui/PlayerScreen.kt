@@ -133,6 +133,8 @@ fun WearPlayerScreen(
 
     var showVolume by remember { mutableStateOf(false) }
     var showCategoryList by remember { mutableStateOf(false) }
+    // 归类列表的两种入口：点底部「归类」键 = 播放模式；双击顶部歌名 = 把当前歌加入类别
+    var categoryAssignMode by remember { mutableStateOf(false) }
 
     // 返回键：浮层（归类列表 / 音量）打开时先关闭浮层，返回上一级而非退出应用
     BackHandler(enabled = active && (showCategoryList || showVolume)) {
@@ -283,7 +285,11 @@ fun WearPlayerScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .pointerInput(Unit) {
-                                    detectTapGestures(onDoubleTap = { showCategoryList = true })
+                                    detectTapGestures(onDoubleTap = {
+                                        // 双击歌名：进入「把当前歌加入归类」模式
+                                        categoryAssignMode = true
+                                        showCategoryList = true
+                                    })
                                 },
                         )
                         Spacer(Modifier.size(smallGap * 0.4f))
@@ -362,7 +368,11 @@ fun WearPlayerScreen(
                             modeTint = modeTint,
                             onVolume = { showVolume = !showVolume },
                             onMode = { vm.cyclePlayMode() },
-                            onCategory = { showCategoryList = true },
+                            onCategory = {
+                                // 底部「归类」键：播放模式（点类别即播放）
+                                categoryAssignMode = false
+                                showCategoryList = true
+                            },
                         )
                     }
 
@@ -475,9 +485,14 @@ fun WearPlayerScreen(
             }
         }
 
-        // 归类列表浮层：双击歌名 / 点底部「归类」键唤起；点击类别播放该归类
+        // 归类列表浮层：双击歌名（把当前歌加入类别）/ 点底部「归类」键（播放模式）唤起
         if (showCategoryList) {
-            CategoryListScreen(vm = vm, onClose = { showCategoryList = false })
+            CategoryListScreen(
+                vm = vm,
+                onClose = { showCategoryList = false },
+                mode = if (categoryAssignMode) CategoryListMode.ASSIGN else CategoryListMode.PLAY,
+                assignTrack = if (categoryAssignMode) vm.currentTrack else null,
+            )
         }
     }
 }

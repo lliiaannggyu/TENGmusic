@@ -4,6 +4,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -19,6 +21,7 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -30,14 +33,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.rotary.onRotaryScrollEvent
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -52,56 +59,76 @@ import androidx.wear.compose.material3.Card
 import androidx.wear.compose.material3.CardDefaults
 import androidx.wear.compose.material3.ListHeader
 import androidx.wear.compose.material3.RadioButton
+import androidx.wear.compose.material3.RadioButtonDefaults
 import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.SwitchButton
+import androidx.wear.compose.material3.SwitchButtonDefaults
 import androidx.wear.compose.material3.CompactButton
 import androidx.wear.compose.material3.Slider
 import androidx.wear.compose.material3.SliderDefaults
 import androidx.wear.compose.material3.Text
 import com.tengwear.tengmusic.BuildConfig
 import com.tengwear.tengmusic.EqPresets
-import com.tengwear.tengmusic.PlayMode
 import com.tengwear.tengmusic.PlayerViewModel
 import kotlin.math.abs
 import kotlin.math.ln
 
-/** 播放速度档位（RadioButton 单选列表与循环切换共用） */
+/** 播放速度档位（RadioButton 单选列表共用） */
 private val SPEED_STEPS = floatArrayOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
 
 /**
- * 歌词自定义配色预设（0xAARRGGBB）—— Material 3 Expressive 官方基线色阶
- * （baseline scheme：primary / secondary / tertiary / error 的 tone 40/70/80 阶 + 纯白），
- * 全部取自 M3 官方基线调色板，保证与 M3E 组件库视觉一致。
+ * 歌词自定义配色预设（0xAARRGGBB）—— Material 3 官方 baseline 色阶（tonal palette）。
+ *
+ * 这就是 M3 官方「种子色 → 色调阶（tone）」的完整色阶：以 Primary #6750A4 为种子，
+ * 按 tone 10/20/30/40/50/60/70/80/90/95 逐级提亮，另有 Secondary / Tertiary / Error /
+ * Neutral 的 tone 40/80 阶。全部取自 M3 官方 baseline scheme，与 M3E 组件库视觉一致。
+ * 色阶之外另提供「自定义」入口：直接填写十六进制色号（#RRGGBB / #AARRGGBB / RRGGBB）。
  */
-private val LYRIC_PALETTE = listOf(
+private val TONAL_PALETTE = listOf(
     0xFFFFFFFF.toInt(), // 纯白
-    0xFFD0BCFF.toInt(), // M3 Primary tone 80
-    0xFFB69DF8.toInt(), // M3 Primary tone 70
-    0xFFEFB8C8.toInt(), // M3 Tertiary tone 80
-    0xFFF2B8B5.toInt(), // M3 Error tone 80
-    0xFFCCC2DC.toInt(), // M3 Secondary tone 80
-    0xFF6750A4.toInt(), // M3 Primary tone 40
-    0xFF7D5260.toInt(), // M3 Tertiary tone 40
+    // —— Primary 色阶（种子 #6750A4，tone 10 → 95）——
+    0xFF21005D.toInt(), // P10
+    0xFF381E72.toInt(), // P20
+    0xFF4F378B.toInt(), // P30
+    0xFF6750A4.toInt(), // P40（基线主色）
+    0xFF7F67BE.toInt(), // P50
+    0xFF9A82DB.toInt(), // P60
+    0xFFB69DF8.toInt(), // P70
+    0xFFD0BCFF.toInt(), // P80
+    0xFFEADDFF.toInt(), // P90
+    0xFFF6EDFF.toInt(), // P95
+    // —— Secondary / Tertiary / Error / Neutral（tone 40 / 80）——
+    0xFF625B71.toInt(), // S40
+    0xFFCCC2DC.toInt(), // S80
+    0xFF7D5260.toInt(), // T40
+    0xFFEFB8C8.toInt(), // T80
+    0xFFB3261E.toInt(), // E40
+    0xFFF2B8B5.toInt(), // E80
+    0xFFE6E0E9.toInt(), // N90
 )
+
+/** 列表容器底色（深色底，与 M3E dark scheme 的 surface 一致） */
+private val CARD_BG = Color(0xF20B0B0E)
 
 /**
  * 手表「音效与播放设置」页（Wear M3E 列表：ScalingLazyColumn + ListHeader +
  * RadioButton / SwitchButton / Slider / Card 标准列表项）：
- * - 播放：播放模式、随机播放、播放速度（RadioButton / SwitchButton）
- * - 音效：均衡器开关、频率响应曲线、预设单选、各频段增益 Slider 手动调节
+ * - 播放：随机播放、播放速度（SwitchButton / RadioButton）
+ * - 音效：均衡器开关、频率响应曲线、预设单选（内置 + 设备预设）、
+ *   竖条频段调节（形态移植自 AndroidEqualizer 的 EqualizerView）
  * - 睡眠定时
- * - 播放器外观：进度环半径 / 粗细、背景模糊 / 明度、歌词颜色（跟随封面或自定义色板）
+ * - 歌词：字号、颜色（M3 官方 tonal 色阶 / 自定义十六进制色号）
  * - 歌词切换动画：多种切换动画可选，带实时预览
- * - 工具：封面工具（给音频文件写入专辑封面）
+ * - 工具：封面工具（批量写入专辑封面）
  * - 关于：UI 版本信息、开源许可
  * - 支持旋转表冠滚动列表
  *
- * 排序原则：按使用频率从高到低——播放操作最常用置顶，音效次之，外观与关于收底。
+ * 列表组件（Card / RadioButton / SwitchButton / Slider）的颜色全部由主题强调色
+ * （跟随歌词色：专辑主色或用户自定义色）实时衍生，保证「列表组件颜色跟着主题色变」。
  *
  * 频段默认预置 5 段（见 PlayerViewModel.init），因此未播放时也能直接看到并手动调节，
  * 不再只剩一个开关。点某个频段即可选中，随后旋转表冠以 1dB 步进微调该频段。
  *
- * @param onOpenAlbumFlow 预留入口（专辑流由播放页上滑唤起）
  * @param onOpenCoverTool 打开封面工具（给音频文件写入专辑封面）
  * @param active          仅当前可见页时抢占表冠焦点（横向翻页三页同在组合树，必须互斥）
  */
@@ -116,7 +143,7 @@ fun AudioSettingsScreen(
     val eqFreqs by vm.eqFreqs.collectAsState()
     val eqGains by vm.eqGains.collectAsState()
     val eqPreset by vm.eqPreset.collectAsState()
-    val playMode by vm.playMode.collectAsState()
+    val eqDevicePresets by vm.eqDevicePresets.collectAsState()
     val shuffle by vm.shuffle.collectAsState()
     val speed by vm.speed.collectAsState()
     val sleepMinutes by vm.sleepMinutes.collectAsState()
@@ -124,6 +151,7 @@ fun AudioSettingsScreen(
     val dimAlpha by vm.dimAlpha.collectAsState()
     val lyricColorMode by vm.lyricColorMode.collectAsState()
     val lyricCustomColor by vm.lyricCustomColor.collectAsState()
+    val lyricFontSize by vm.lyricFontSize.collectAsState()
     val ringRadiusFrac by vm.ringRadiusFrac.collectAsState()
     val ringStroke by vm.ringStroke.collectAsState()
     // 设置页强调色跟随歌词主题色（专辑主色或用户自定义色）
@@ -135,7 +163,7 @@ fun AudioSettingsScreen(
     val listFr = rememberRotaryFocusRequester(active)
     // 微调模式：选中某频段后，表冠直接调增益（不再滚动列表）
     var selectedBand by remember { mutableStateOf<Int?>(null) }
-    // 频段调节区是否展开（默认折叠，点标题展开预设 + 手动增益）
+    // 频段调节区是否展开（默认折叠，点标题展开预设 + 竖条调节）
     var eqExpanded by remember { mutableStateOf(false) }
     var showLicenses by remember { mutableStateOf(false) }
     val knobFr = remember { FocusRequester() }
@@ -162,25 +190,6 @@ fun AudioSettingsScreen(
                 item { ListHeader { Text("播放") } }
 
                 item {
-                    Text(
-                        "播放模式",
-                        fontSize = 10.sp,
-                        color = Color.Gray,
-                        modifier = Modifier.fillMaxWidth().padding(start = 14.dp, top = 2.dp),
-                    )
-                }
-                PlayMode.entries.forEach { mode ->
-                    item {
-                        RadioButton(
-                            selected = playMode == mode,
-                            onSelect = { vm.setPlayMode(mode) },
-                            modifier = Modifier.fillMaxWidth(),
-                            label = { Text(mode.label, fontSize = 11.sp) },
-                        )
-                    }
-                }
-
-                item {
                     SwitchButton(
                         checked = shuffle,
                         onCheckedChange = { vm.toggleShuffle() },
@@ -189,6 +198,7 @@ fun AudioSettingsScreen(
                         secondaryLabel = {
                             Text(if (shuffle) "已开启" else "已关闭", fontSize = 9.sp)
                         },
+                        colors = accentSwitchColors(accent),
                     )
                 }
 
@@ -212,6 +222,7 @@ fun AudioSettingsScreen(
                                     fontSize = 11.sp,
                                 )
                             },
+                            colors = accentRadioColors(accent),
                         )
                     }
                 }
@@ -229,6 +240,7 @@ fun AudioSettingsScreen(
                         secondaryLabel = {
                             Text(if (eqEnabled) "已开启" else "已关闭", fontSize = 9.sp)
                         },
+                        colors = accentSwitchColors(accent),
                     )
                 }
 
@@ -252,12 +264,12 @@ fun AudioSettingsScreen(
                         )
                     }
 
-                    // 频段调节（可折叠）：标题卡显示当前预设，点开才显示预设列表 + 手动增益
+                    // 频段调节（可折叠）：标题卡显示当前预设，点开才显示预设列表 + 竖条调节
                     item {
                         Card(
                             onClick = { eqExpanded = !eqExpanded },
                             modifier = Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors()
+                            colors = accentCardColors(accent),
                         ) {
                             Text(
                                 if (eqExpanded) "频段调节 ▲" else "频段调节 ▼",
@@ -269,7 +281,7 @@ fun AudioSettingsScreen(
                     }
 
                     if (eqExpanded) {
-                        // 预设（M3E RadioButton 单选）
+                        // 内置预设（M3E RadioButton 单选）
                         item { ListHeader { Text("预设") } }
                         items(EqPresets.ALL.size) { i ->
                             val preset = EqPresets.ALL[i]
@@ -279,7 +291,23 @@ fun AudioSettingsScreen(
                                 onSelect = { vm.applyPreset(preset) },
                                 modifier = Modifier.fillMaxWidth(),
                                 label = { Text(preset.name, fontSize = 11.sp) },
+                                colors = accentRadioColors(accent),
                             )
+                        }
+
+                        // 设备内置预设（系统 Equalizer 自带，移植自 AndroidEqualizer）
+                        if (eqDevicePresets.isNotEmpty()) {
+                            item { ListHeader { Text("设备预设") } }
+                            items(eqDevicePresets.size) { i ->
+                                val name = eqDevicePresets[i]
+                                RadioButton(
+                                    selected = name == eqPreset,
+                                    onSelect = { vm.applyDevicePreset(i) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    label = { Text(name, fontSize = 11.sp) },
+                                    colors = accentRadioColors(accent),
+                                )
+                            }
                         }
 
                         // 重置为平直（M3E CompactButton）
@@ -292,45 +320,20 @@ fun AudioSettingsScreen(
                             }
                         }
 
-                        // 频段增益（手动调节）：每个频段一个 M3E Card 行
+                        // 竖条频段调节（形态移植自 AndroidEqualizer 的 EqualizerView：
+                        // 每频段一根竖向滑条，顶部 dB 值、底部频率，0dB 居中刻度线）
                         item { ListHeader { Text("频段") } }
-                        items(eqFreqs.size) { i ->
-                            val g = eqGains.getOrElse(i) { 0 }
-                            val sel = selectedBand == i
-                            Card(
-                                onClick = { selectedBand = if (sel) null else i },
-                                modifier = Modifier.fillMaxWidth(),
-                                colors = CardDefaults.cardColors(
-                                    containerColor = if (sel) {
-                                        accent.copy(alpha = 0.22f)
-                                    } else {
-                                        Color(0xF20B0B0E)
-                                    },
-                                ),
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 10.dp, vertical = 2.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    Text(
-                                        "${formatFreq(eqFreqs[i])}   ${"%.1f".format(g / 100f)} dB",
-                                        fontSize = 10.sp,
-                                        color = if (sel) accent else Color.Gray,
-                                        modifier = Modifier.width(72.dp),
-                                    )
-                                    Slider(
-                                        value = (g / 100f).coerceIn(-15f, 15f),
-                                        onValueChange = { vm.setBandGain(i, (it * 100f).toInt()) },
-                                        // steps 必须 > 0：M3E Slider 的 ±按钮步长 = 量程/(steps+1)，
-                                        // steps=0 时步长=整个量程，点一下直接跳到最小/最大
-                                        steps = 300,
-                                        valueRange = -15f..15f,
-                                        modifier = Modifier.fillMaxWidth(),
-                                    )
-                                }
-                            }
+                        item {
+                            EqBandBars(
+                                freqs = eqFreqs,
+                                gains = eqGains,
+                                selected = selectedBand,
+                                accent = accent,
+                                onChange = { band, db ->
+                                    selectedBand = band
+                                    vm.setBandGain(band, (db * 100f).toInt())
+                                },
+                            )
                         }
                     }
                 }
@@ -355,11 +358,12 @@ fun AudioSettingsScreen(
                             steps = 120,
                             valueRange = 0f..120f,
                             modifier = Modifier.fillMaxWidth(),
+                            colors = accentSliderColors(accent),
                         )
                     }
                 }
 
-                // ========== 4. 播放器外观（进度环 / 背景 / 歌词颜色）==========
+                // ========== 4. 播放器外观（进度环 / 背景）==========
                 item { ListHeader { Text("播放器外观") } }
                 // 进度环半径（占屏幕短边比例，可缩至很小）
                 item {
@@ -374,6 +378,7 @@ fun AudioSettingsScreen(
                             steps = 45,
                             valueRange = 0.05f..0.50f,
                             modifier = Modifier.fillMaxWidth(),
+                            colors = accentSliderColors(accent),
                         )
                         // 说明上下限：50% 时圆环直径 = 屏幕短边（顶到圆屏边缘，为物理上限）；
                         // 下限可缩到很小，满足「尽可能小」的需求
@@ -398,6 +403,7 @@ fun AudioSettingsScreen(
                             steps = 10,
                             valueRange = 2f..12f,
                             modifier = Modifier.fillMaxWidth(),
+                            colors = accentSliderColors(accent),
                         )
                     }
                 }
@@ -414,6 +420,7 @@ fun AudioSettingsScreen(
                             steps = 40,
                             valueRange = 0f..40f,
                             modifier = Modifier.fillMaxWidth(),
+                            colors = accentSliderColors(accent),
                         )
                     }
                 }
@@ -430,12 +437,33 @@ fun AudioSettingsScreen(
                             steps = 20,
                             valueRange = 0f..100f,
                             modifier = Modifier.fillMaxWidth(),
+                            colors = accentSliderColors(accent),
                         )
                     }
                 }
 
-                // 歌词颜色：跟随专辑封面主色，或用户从预设色板自定义
-                item { ListHeader { Text("歌词颜色") } }
+                // ========== 歌词（字号 / 颜色）==========
+                item { ListHeader { Text("歌词") } }
+
+                // 歌词字号（12sp ~ 22sp，实时预览生效）
+                item {
+                    Column(
+                        Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Text("歌词字号 ${lyricFontSize.toInt()}sp", fontSize = 11.sp, color = accent)
+                        Slider(
+                            value = lyricFontSize,
+                            onValueChange = { vm.setLyricFontSize(it) },
+                            steps = 10,
+                            valueRange = 12f..22f,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = accentSliderColors(accent),
+                        )
+                    }
+                }
+
+                // 歌词颜色：跟随专辑封面主色，或用户从 M3 官方 tonal 色阶 / 自定义色号选择
                 item {
                     RadioButton(
                         selected = lyricColorMode == 0,
@@ -445,6 +473,7 @@ fun AudioSettingsScreen(
                         secondaryLabel = {
                             Text(if (lyricColorMode == 0) "当前使用" else "未使用", fontSize = 9.sp)
                         },
+                        colors = accentRadioColors(accent),
                     )
                 }
                 item {
@@ -453,34 +482,54 @@ fun AudioSettingsScreen(
                         onSelect = { vm.setLyricColorMode(1) },
                         modifier = Modifier.fillMaxWidth(),
                         label = { Text("自定义颜色", fontSize = 11.sp) },
-                        secondaryLabel = { Text("从下方色板选择", fontSize = 9.sp) },
+                        secondaryLabel = { Text("M3 官方色阶 / 填十六进制色号", fontSize = 9.sp) },
+                        colors = accentRadioColors(accent),
+                    )
+                }
+
+                // —— M3 官方 tonal 色阶（Primary tone 10→95）——
+                item {
+                    Text(
+                        "Primary 色阶 · tone 10 → 95",
+                        fontSize = 8.sp,
+                        color = Color.Gray,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
                 item {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 8.dp, vertical = 4.dp),
-                        horizontalArrangement = Arrangement.SpaceEvenly,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        LYRIC_PALETTE.forEach { c ->
-                            val selected = lyricColorMode == 1 && lyricCustomColor == c
-                            Box(
-                                modifier = Modifier
-                                    .size(18.dp)
-                                    .background(Color(c), CircleShape)
-                                    .then(
-                                        if (selected) {
-                                            Modifier.border(2.dp, Color.White, CircleShape)
-                                        } else {
-                                            Modifier
-                                        }
-                                    )
-                                    .clickable { vm.setLyricCustomColor(c) }
-                            )
-                        }
-                    }
+                    LyricPaletteRow(
+                        colors = TONAL_PALETTE.subList(0, 11),
+                        selected = lyricColorMode == 1 && TONAL_PALETTE.subList(0, 11).contains(lyricCustomColor),
+                        selectedColor = lyricCustomColor,
+                        onPick = { vm.setLyricCustomColor(it) },
+                    )
+                }
+                // —— Secondary / Tertiary / Error / Neutral（tone 40 / 80）——
+                item {
+                    Text(
+                        "Secondary / Tertiary / Error / Neutral · tone 40 / 80",
+                        fontSize = 8.sp,
+                        color = Color.Gray,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                item {
+                    LyricPaletteRow(
+                        colors = TONAL_PALETTE.subList(11, TONAL_PALETTE.size),
+                        selected = lyricColorMode == 1 && TONAL_PALETTE.subList(11, TONAL_PALETTE.size).contains(lyricCustomColor),
+                        selectedColor = lyricCustomColor,
+                        onPick = { vm.setLyricCustomColor(it) },
+                    )
+                }
+
+                // —— 自定义：直接填十六进制色号（#RRGGBB / #AARRGGBB / RRGGBB）——
+                item {
+                    HexColorInput(
+                        accent = accent,
+                        onApply = { vm.setLyricCustomColor(it) },
+                    )
                 }
 
                 // ========== 歌词切换动画（多动画可选 + 实时预览）==========
@@ -499,6 +548,7 @@ fun AudioSettingsScreen(
                             modifier = Modifier.fillMaxWidth(),
                             label = { Text(anim.label, fontSize = 11.sp) },
                             secondaryLabel = { Text(anim.desc, fontSize = 9.sp) },
+                            colors = accentRadioColors(accent),
                         )
                         // 实时预览：迷你歌词行循环演示该动画的切换效果
                         LyricTransitionPreview(anim, accent)
@@ -511,10 +561,10 @@ fun AudioSettingsScreen(
                     Card(
                         onClick = onOpenCoverTool,
                         modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(contentColor = accent),
+                        colors = accentCardColors(accent),
                     ) {
                         Text("封面工具", fontSize = 11.sp)
-                        Text("给音频文件写入专辑封面", fontSize = 9.sp)
+                        Text("批量匹配并写入专辑封面", fontSize = 9.sp)
                     }
                 }
 
@@ -526,7 +576,7 @@ fun AudioSettingsScreen(
                     Card(
                         onClick = { },
                         modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(contentColor = accent),
+                        colors = accentCardColors(accent),
                     ) {
                         Text("播放器 UI", fontSize = 11.sp)
                         Text("M3E（Material 3 Expressive）", fontSize = 9.sp)
@@ -538,7 +588,7 @@ fun AudioSettingsScreen(
                     Card(
                         onClick = { showLicenses = !showLicenses },
                         modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(contentColor = accent),
+                        colors = accentCardColors(accent),
                     ) {
                         Text(if (showLicenses) "用到的开源项目 ▲" else "用到的开源项目 ▼", fontSize = 11.sp)
                         Text("共 ${OpenSourceProjects.ALL.size} 项", fontSize = 9.sp)
@@ -604,6 +654,310 @@ fun AudioSettingsScreen(
     }
 }
 
+// ---------------- 主题色衍生的 M3E 组件颜色（#82：列表组件颜色跟随主题色） ----------------
+
+/** Card 容器/内容/标题色由强调色衍生 */
+@Composable
+private fun accentCardColors(accent: Color) = CardDefaults.cardColors(
+    containerColor = CARD_BG,
+    contentColor = Color.White,
+    appNameColor = accent,
+    timeColor = Color.Gray,
+    titleColor = accent,
+    subtitleColor = Color.Gray,
+)
+
+/** RadioButton 选中态容器/指示器用强调色 */
+@Composable
+private fun accentRadioColors(accent: Color) = RadioButtonDefaults.radioButtonColors(
+    selectedContainerColor = accent.copy(alpha = 0.22f),
+    selectedContentColor = Color.White,
+    selectedSecondaryContentColor = accent,
+    selectedIconColor = accent,
+    selectedControlColor = accent,
+    unselectedContainerColor = CARD_BG,
+    unselectedContentColor = Color.White,
+    unselectedSecondaryContentColor = Color.Gray,
+    unselectedIconColor = Color.Gray,
+    unselectedControlColor = Color.Gray,
+)
+
+/** SwitchButton 选中态容器/轨道/滑块用强调色 */
+@Composable
+private fun accentSwitchColors(accent: Color) = SwitchButtonDefaults.switchButtonColors(
+    checkedContainerColor = accent.copy(alpha = 0.22f),
+    checkedContentColor = Color.White,
+    checkedSecondaryContentColor = accent,
+    checkedIconColor = accent,
+    checkedThumbColor = accent,
+    checkedThumbIconColor = Color.White,
+    checkedTrackColor = accent.copy(alpha = 0.45f),
+    checkedTrackBorderColor = accent,
+    uncheckedContainerColor = CARD_BG,
+    uncheckedContentColor = Color.White,
+    uncheckedSecondaryContentColor = Color.Gray,
+    uncheckedIconColor = Color.Gray,
+    uncheckedThumbColor = Color.Gray,
+    uncheckedTrackColor = Color(0x33FFFFFF),
+    uncheckedTrackBorderColor = Color.Gray,
+)
+
+/** Slider 滑槽/已选条/按钮图标用强调色 */
+@Composable
+private fun accentSliderColors(accent: Color) = SliderDefaults.sliderColors(
+    containerColor = CARD_BG,
+    buttonIconColor = accent,
+    selectedBarColor = accent,
+    unselectedBarColor = Color(0x33FFFFFF),
+    selectedBarSeparatorColor = Color.White,
+    unselectedBarSeparatorColor = Color.Gray,
+)
+
+// ---------------- M3 tonal 色阶选择行 + 自定义十六进制输入（#81） ----------------
+
+/** 一行圆形色板；命中当前自定义色时加白圈高亮 */
+@Composable
+private fun LyricPaletteRow(
+    colors: List<Int>,
+    selected: Boolean,
+    selectedColor: Int,
+    onPick: (Int) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 6.dp, vertical = 3.dp),
+        horizontalArrangement = Arrangement.SpaceEvenly,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        colors.forEach { c ->
+            val isSel = selected && selectedColor == c
+            Box(
+                modifier = Modifier
+                    .size(16.dp)
+                    .background(Color(c), CircleShape)
+                    .then(
+                        if (isSel) Modifier.border(2.dp, Color.White, CircleShape) else Modifier
+                    )
+                    .clickable { onPick(c) }
+            )
+        }
+    }
+}
+
+/**
+ * 自定义歌词色：直接填十六进制色号（#RRGGBB / #AARRGGBB / RRGGBB）。
+ * 输入合法（6 或 8 位十六进制）时点「应用」立即写入并切到自定义模式；
+ * 非法输入时输入框描红提示，不写入。
+ */
+@Composable
+private fun HexColorInput(accent: Color, onApply: (Int) -> Unit) {
+    var hex by remember { mutableStateOf("") }
+    var bad by remember { mutableStateOf(false) }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .background(
+                    if (bad) Color(0x33FF5A7A) else Color(0x22FFFFFF),
+                    RoundedCornerShape(14.dp),
+                )
+                .padding(horizontal = 8.dp, vertical = 6.dp),
+        ) {
+            if (hex.isEmpty()) {
+                Text("#RRGGBB 或 #AARRGGBB", fontSize = 9.sp, color = Color.Gray)
+            }
+            BasicTextField(
+                value = hex,
+                onValueChange = {
+                    hex = it
+                    bad = false
+                },
+                singleLine = true,
+                textStyle = TextStyle(color = Color.White, fontSize = 10.sp),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        Text(
+            "应用",
+            fontSize = 10.sp,
+            color = accent,
+            modifier = Modifier
+                .clickable {
+                    val parsed = parseHexColor(hex)
+                    if (parsed != null) {
+                        onApply(parsed)
+                        bad = false
+                        hex = ""
+                    } else {
+                        bad = true
+                    }
+                }
+                .padding(4.dp),
+        )
+    }
+}
+
+/** 解析十六进制色号：支持 #RRGGBB / #AARRGGBB / RRGGBB / AARRGGBB；不合法返回 null */
+internal fun parseHexColor(raw: String): Int? {
+    val s = raw.trim().removePrefix("#").removePrefix("0x").removePrefix("0X")
+    if (s.length != 6 && s.length != 8) return null
+    if (!s.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }) return null
+    return try {
+        if (s.length == 6) {
+            0xFF000000.toInt() or s.toInt(16)
+        } else {
+            s.toLong(16).toInt()
+        }
+    } catch (_: NumberFormatException) {
+        null
+    }
+}
+
+// ---------------- 竖条频段调节（形态移植自 AndroidEqualizer 的 EqualizerView） ----------------
+
+/**
+ * EQ 竖条组：每频段一根竖向滑条，顶部 dB 值、底部频率标签，0dB 处居中刻度线。
+ * 支持点按定位 + 上下拖动调增益（拖动即选中该频段，随后可旋转表冠微调）。
+ */
+@Composable
+private fun EqBandBars(
+    freqs: List<Int>,
+    gains: List<Int>,
+    selected: Int?,
+    accent: Color,
+    onChange: (band: Int, db: Float) -> Unit,
+) {
+    val maxAbsDb = 15f
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp),
+    ) {
+        val n = freqs.size
+        // 圆屏宽度有限：条宽随频段数自适应（5 段约 30dp，8+ 段收窄到 20dp 也放得下）
+        val barW = ((maxWidth.value * 0.78f) / n).coerceIn(18f, 30f).dp
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.Bottom,
+        ) {
+            for (i in 0 until n) {
+                val db = (gains.getOrElse(i) { 0 } / 100f).coerceIn(-maxAbsDb, maxAbsDb)
+                val sel = selected == i
+                Column(
+                    modifier = Modifier.width(barW),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(
+                        text = "%+.1f".format(db),
+                        fontSize = 7.sp,
+                        color = if (sel) accent else Color.Gray,
+                        maxLines = 1,
+                    )
+                    EqBandBar(
+                        db = db,
+                        selected = sel,
+                        accent = accent,
+                        onChange = { onChange(i, it) },
+                    )
+                    Text(
+                        text = formatFreq(freqs[i]),
+                        fontSize = 8.sp,
+                        color = if (sel) accent else Color.Gray,
+                        maxLines = 1,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** 单根竖条：0dB 居中刻度，填充色强调，旋钮白点，拖动/点按调增益 */
+@Composable
+private fun EqBandBar(
+    db: Float,
+    selected: Boolean,
+    accent: Color,
+    onChange: (Float) -> Unit,
+) {
+    val maxAbsDb = 15f
+    val density = LocalDensity.current
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(66.dp)
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    // 点按即定位：把手指位置映射为增益
+                    val h = size.height.toFloat()
+                    val v = (1f - down.position.y / h) * 2f - 1f
+                    onChange((v * maxAbsDb).coerceIn(-maxAbsDb, maxAbsDb))
+                    down.consume()
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        if (change.changedToUp()) break
+                        if (change.position != change.previousPosition) {
+                            val hh = size.height.toFloat()
+                            val vv = (1f - change.position.y / hh) * 2f - 1f
+                            onChange((vv * maxAbsDb).coerceIn(-maxAbsDb, maxAbsDb))
+                            change.consume()
+                        }
+                    }
+                }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(modifier = Modifier.fillMaxWidth().height(66.dp)) {
+            val w = size.width
+            val h = size.height
+            val trackW = with(density) { 9.dp.toPx() }
+            val r = CornerRadius(trackW / 2f)
+            val pad = with(density) { 5.dp.toPx() }
+            val x = (w - trackW) / 2f
+            // 底轨
+            drawRoundRect(
+                color = Color(0x33FFFFFF),
+                topLeft = Offset(x, pad),
+                size = Size(trackW, h - 2 * pad),
+                cornerRadius = r,
+            )
+            // 0dB 居中刻度线
+            drawLine(
+                color = Color(0x66FFFFFF),
+                start = Offset(0f, h / 2f),
+                end = Offset(w, h / 2f),
+                strokeWidth = with(density) { 1.dp.toPx() },
+            )
+            // 填充（中线 → 当前值）
+            val y = (h / 2f - (db / maxAbsDb) * (h / 2f - pad))
+                .coerceIn(pad, h - pad)
+            drawRoundRect(
+                color = accent,
+                topLeft = Offset(x, minOf(y, h / 2f)),
+                size = Size(trackW, abs(h / 2f - y).coerceAtLeast(with(density) { 3.dp.toPx() })),
+                cornerRadius = r,
+            )
+            // 旋钮
+            drawCircle(
+                color = Color.White,
+                radius = with(density) { if (selected) 5.5f.dp.toPx() else 4f.dp.toPx() },
+                center = Offset(w / 2f, y),
+            )
+        }
+    }
+}
+
+// ---------------- 频率响应曲线 ----------------
+
 /**
  * 频率响应曲线：横轴为频段中心频率（对数轴 20Hz–20kHz），纵轴为增益（dB，范围 ±15）。
  * 把每个频段的增益连成折线并在数据点画圆点，直观反映当前均衡器形状；增益变化时实时重绘。
@@ -664,7 +1018,3 @@ private fun EqCurve(
 
 private fun formatFreq(hz: Int): String =
     if (hz >= 1000) "${hz / 1000}k" else "$hz"
-
-private fun nextPlaybackSpeed(cur: Float): Float {
-    return SPEED_STEPS.firstOrNull { it > cur + 0.01f } ?: SPEED_STEPS.first()
-}

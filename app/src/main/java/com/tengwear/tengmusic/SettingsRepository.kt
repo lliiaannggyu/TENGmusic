@@ -27,6 +27,9 @@ object SettingsRepository {
     /** 歌词切换动画（LyricTransition.ordinal） */
     private const val KEY_LYRIC_TRANSITION = "lyric_transition"
 
+    /** 歌词字号（sp，12 ~ 22，默认 15） */
+    private const val KEY_LYRIC_FONT_SIZE = "lyric_font_size"
+
     fun getLyricColorMode(context: Context): Int =
         context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
             .getInt(KEY_LYRIC_COLOR_MODE, 0)
@@ -92,6 +95,19 @@ object SettingsRepository {
         context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
             .edit()
             .putInt(KEY_LYRIC_TRANSITION, id)
+            .apply()
+    }
+
+    /** 歌词字号（sp），读取时钳制在手表可读范围 12 ~ 22 */
+    fun getLyricFontSize(context: Context): Float =
+        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+            .getFloat(KEY_LYRIC_FONT_SIZE, 15f)
+            .coerceIn(12f, 22f)
+
+    fun setLyricFontSize(context: Context, sp: Float) {
+        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+            .edit()
+            .putFloat(KEY_LYRIC_FONT_SIZE, sp.coerceIn(12f, 22f))
             .apply()
     }
 }

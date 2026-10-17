@@ -129,4 +129,32 @@ object CategoryRepository {
         save(context, list)
         return load(context)
     }
+
+    /**
+     * 把曲目加入自定义类别（归类模式：双击歌名 → 点类别）。
+     * 内置类别（全部歌曲 / 收藏）不接受单曲加入，直接返回原列表。
+     */
+    fun addTrack(context: Context, trackId: Long, categoryId: String): List<Category> {
+        val list = load(context)
+        val target = list.firstOrNull { it.id == categoryId } ?: return list
+        if (target.isBuiltIn) return list
+        if (target.trackIds.contains(trackId)) return list
+        val updated = list.map { c ->
+            if (c.id == categoryId) c.copy(trackIds = c.trackIds + trackId) else c
+        }
+        save(context, updated)
+        return load(context)
+    }
+
+    /** 把曲目从自定义类别移出 */
+    fun removeTrack(context: Context, trackId: Long, categoryId: String): List<Category> {
+        val list = load(context)
+        val target = list.firstOrNull { it.id == categoryId } ?: return list
+        if (!target.trackIds.contains(trackId)) return list
+        val updated = list.map { c ->
+            if (c.id == categoryId) c.copy(trackIds = c.trackIds - trackId) else c
+        }
+        save(context, updated)
+        return load(context)
+    }
 }

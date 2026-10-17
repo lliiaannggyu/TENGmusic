@@ -44,6 +44,10 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     private val _currentIndex = MutableStateFlow(-1)
     val currentIndex = _currentIndex.asStateFlow()
 
+    /** 当前播放曲目（归类「双击歌名 → 加入类别」时用） */
+    val currentTrack: Track?
+        get() = _tracks.value.getOrNull(_currentIndex.value)
+
     private val _isPlaying = MutableStateFlow(false)
     val isPlaying = _isPlaying.asStateFlow()
 
@@ -77,6 +81,10 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _eqPreset = MutableStateFlow(EqPresets.ALL.first().name)
     val eqPreset = _eqPreset.asStateFlow()
+
+    /** 设备内置预设名称列表（来自系统 Equalizer，移植自 AndroidEqualizer） */
+    private val _eqDevicePresets = MutableStateFlow<List<String>>(emptyList())
+    val eqDevicePresets = _eqDevicePresets.asStateFlow()
 
     // ---------------- 播放模式 / 速度 / 定时 ----------------
 
@@ -168,6 +176,14 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     )
     val lyricTransition = _lyricTransition.asStateFlow()
 
+    // ---------------- 歌词字号 ----------------
+
+    /** 歌词字号（sp，12 ~ 22），设置里可调，歌词页实时生效 */
+    private val _lyricFontSize = MutableStateFlow(
+        SettingsRepository.getLyricFontSize(getApplication())
+    )
+    val lyricFontSize = _lyricFontSize.asStateFlow()
+
     // ---------------- 封面工具 ----------------
 
     /** 封面工具最近一次操作结果（写入中 / 成功 / 失败），供界面提示 */
@@ -243,6 +259,8 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             val prevGains = _eqGains.value
             if (_eqFreqs.value.size != count) {
                 _eqFreqs.value = AudioEffects.centerFreqsHz
+                // 设备内置预设（移植自 AndroidEqualizer 的 EqualizerManager.usePreset）
+                _eqDevicePresets.value = AudioEffects.devicePresetNames
                 // 频段数一致则沿用用户增益；否则退回预设默认
                 val gains = if (prevGains.size == count) {
                     prevGains
@@ -385,6 +403,11 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         SettingsRepository.setLyricTransition(getApplication(), anim.ordinal)
     }
 
+    fun setLyricFontSize(sp: Float) {
+        _lyricFontSize.value = sp.coerceIn(12f, 22f)
+        SettingsRepository.setLyricFontSize(getApplication(), sp)
+    }
+
     // ---------------- 封面工具 API ----------------
 
     /**
@@ -404,6 +427,34 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
     fun clearCoverMessage() {
         _coverMessage.value = null
+    }
+
+    /**
+     * 批量写入封面（封面工具）：按用户确认后的匹配对依次写入，
+     * 逐个汇报进度（"3/8 已写入：xxx"），失败项继续处理不中断。
+     */
+    fun writeCoverArtBatch(pairs: List<Pair<Track, ByteArray>>) {
+        if (pairs.isEmpty()) {
+            _coverMessage.value = "没有待写入的封面"
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            var ok = 0
+            var fail = 0
+            pairs.forEachIndexed { i, (track, bytes) ->
+                _coverMessage.value = "正在写入 ${i + 1}/${pairs.size}：${track.title}"
+                val (success, _) = Id3Tag.writeCoverArt(
+                    getApplication(), track.uri, bytes, "image/jpeg",
+                    title = track.title, artist = track.artist, album = track.album,
+                )
+                if (success) ok++ else fail++
+            }
+            _coverMessage.value = if (fail == 0) {
+                "批量写入完成：$ok 个封面已更新"
+            } else {
+                "批量写入完成：成功 $ok，失败 $fail"
+            }
+        }
     }
 
     private fun updateLyric(posMs: Long) {
@@ -504,6 +555,22 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * 归类模式（双击歌名唤起列表时）：把当前曲目加入指定自定义类别。
+     * 内置「全部歌曲」不接受单曲加入；「收藏」走收藏开关。
+     * @return 是否成功加入
+     */
+    fun addTrackToCategory(trackId: Long, categoryId: String): Boolean {
+        val list = CategoryRepository.addTrack(getApplication(), trackId, categoryId)
+        _categories.value = list
+        return list.any { it.id == categoryId && it.trackIds.contains(trackId) }
+    }
+
+    /** 归类模式：把当前曲目从指定自定义类别移出 */
+    fun removeTrackFromCategory(trackId: Long, categoryId: String) {
+        _categories.value = CategoryRepository.removeTrack(getApplication(), trackId, categoryId)
+    }
+
+    /**
      * 播放某个归类：按类别类型解析曲目子集，重建播放队列并从头播放。
      * - 全部歌曲：全部曲目
      * - 收藏：收藏集合
@@ -574,6 +641,19 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         _eqGains.value = gains
         _eqPreset.value = preset.name
         gains.forEachIndexed { i, g -> AudioEffects.setBandLevel(i, g) }
+    }
+
+    /**
+     * 应用设备内置预设（系统 Equalizer 自带预设，移植自 AndroidEqualizer）。
+     * 应用后把各频段真实增益读回 UI 状态。
+     */
+    fun applyDevicePreset(index: Int) {
+        AudioEffects.useDevicePreset(index)
+        val count = _eqFreqs.value.size
+        if (count == 0) return
+        val gains = (0 until count).map { AudioEffects.manager().getBandLevel(it) }
+        _eqGains.value = gains
+        _eqPreset.value = AudioEffects.devicePresetNames.getOrNull(index) ?: "自定义"
     }
 
     // ---------------- 播放模式 / 速度 / 定时 ----------------

@@ -61,6 +61,8 @@ fun LyricsScreen(
     val lyricColor by vm.lyricColor.collectAsState()
     // 歌词切换动画（设置里可选，带实时预览）
     val anim by vm.lyricTransition.collectAsState()
+    // 歌词字号（设置里可调 12sp ~ 22sp）
+    val lyricFontSize by vm.lyricFontSize.collectAsState()
     // 初始化即把当前句作为中心项，避免首次进入先停在顶部再「跳」到中间的闪动
     val listState = rememberScalingLazyListState(initialCenterItemIndex = idx.coerceAtLeast(0))
     val focusRequester = rememberRotaryFocusRequester(active)
@@ -130,6 +132,7 @@ fun LyricsScreen(
                         activeColor = Color(lyricColor),
                         anim = anim,
                         lineProgress = if (i == idx) lineProgress else 0f,
+                        fontSize = lyricFontSize.sp,
                         onClick = { vm.seekToLyric(line.timeMs) },
                     )
                 }
