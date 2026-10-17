@@ -25,8 +25,8 @@ object SettingsRepository {
     private const val KEY_RING_STROKE = "ring_stroke"
 
     /**
-     * 进度条样式：0 = 圆环（默认，经典进度环），1 = 波浪（M3E 官方
-     * LinearWavyProgressIndicator 同款正弦丝带进度条）。
+     * 进度条样式：0 = 圆环（默认，经典进度环），1 = 波浪圆环（M3E 官方
+     * CircularWavyProgressIndicator 同款：轨道为平弧，进度为正弦波沿弧流动）。
      */
     private const val KEY_PROGRESS_STYLE = "progress_style"
 

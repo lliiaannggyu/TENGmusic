@@ -371,7 +371,7 @@ fun AudioSettingsScreen(
 
                 // ========== 4. 播放器外观（进度条样式 / 进度环 / 背景）==========
                 item { ListHeader { Text("播放器外观") } }
-                // 进度条样式：圆环 / 波浪（M3E 官方 LinearWavyProgressIndicator 同款）二选一
+                // 进度条样式：圆环 / 波浪圆环（M3E 官方 CircularWavyProgressIndicator 同款）二选一
                 item {
                     Column(
                         Modifier.fillMaxWidth().padding(horizontal = 12.dp),
@@ -409,7 +409,7 @@ fun AudioSettingsScreen(
                             },
                             colors = accentRadioColors(accent),
                         )
-                        // 波浪（M3E 官方 LinearWavyProgressIndicator 同款）
+                        // 波浪圆环（M3E 官方 CircularWavyProgressIndicator 同款）
                         RadioButton(
                             selected = progressStyle == SettingsRepository.PROGRESS_STYLE_WAVY,
                             onSelect = {
@@ -422,12 +422,12 @@ fun AudioSettingsScreen(
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
                                     Text(
-                                        "波浪 · M3E 官方",
+                                        "波浪圆环 · M3E 官方",
                                         fontSize = 11.sp,
                                         color = Color.White,
                                         modifier = Modifier.weight(1f),
                                     )
-                                    WavyProgressIndicatorPreview(
+                                    WavyCircularProgressIndicatorPreview(
                                         color = accent,
                                         trackColor = Color(0x22FFFFFF),
                                     )
@@ -436,7 +436,7 @@ fun AudioSettingsScreen(
                             colors = accentRadioColors(accent),
                         )
                         Text(
-                            "二选一切换，立即生效；波浪为 M3E 官方波浪形进度条同款",
+                            "二选一切换，立即生效；波浪圆环为 M3E 官方 CircularWavyProgressIndicator 同款：轨道为平弧，进度是沿弧流动的正弦波",
                             fontSize = 8.sp,
                             color = Color.Gray,
                             textAlign = TextAlign.Center,

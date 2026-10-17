@@ -150,8 +150,9 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     val ringStroke = _ringStroke.asStateFlow()
 
     /**
-     * 进度条样式：0 = 圆环（默认），1 = 波浪（M3E 官方 LinearWavyProgressIndicator
-     * 同款正弦丝带）。两种样式互斥，设置页可切换。
+     * 进度条样式：0 = 圆环（默认），1 = 波浪圆环（M3E 官方
+     * CircularWavyProgressIndicator 同款：轨道平弧 + 进度正弦波沿弧流动）。
+     * 两种样式互斥，设置页可切换。
      */
     private val _progressStyle =
         MutableStateFlow(SettingsRepository.getProgressStyle(getApplication()))

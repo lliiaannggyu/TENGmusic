@@ -118,7 +118,7 @@ fun WearPlayerScreen(
     val dimAlpha by vm.dimAlpha.collectAsState()
     val ringRadiusFrac by vm.ringRadiusFrac.collectAsState()
     val ringStroke by vm.ringStroke.collectAsState()
-    // 进度条样式：0 = 圆环（默认），1 = 波浪（M3E 官方 LinearWavyProgressIndicator 同款）
+    // 进度条样式：0 = 圆环（默认），1 = 波浪圆环（M3E 官方 CircularWavyProgressIndicator 同款）
     val progressStyle by vm.progressStyle.collectAsState()
     val lyricColor by vm.lyricColor.collectAsState()
     val current = tracks.getOrNull(index)
@@ -240,7 +240,8 @@ fun WearPlayerScreen(
 
             // 进度环（样式 0）：按屏幕短边计算直径，圆心补偿 TimeText 内缩后居中于屏幕中心，
             // 使其真正贴近圆屏边缘（文字/按钮仍按内容盒安全圆排布，避开 TimeText）。
-            // 波浪样式（1）下隐藏——进度由底部波浪进度条显示（见下方）。
+            // 波浪圆环（样式 1）占据同一位置——M3E 官方 CircularWavyProgressIndicator 同款：
+            // 轨道为普通弧线，进度部分为沿弧流动的正弦波。
             // 角度语义（Compose）：0°=3点钟，顺时针增大，270°=12点钟。
             // startAngle=300°（1点钟）顺时针扫到 endAngle=600°（等价 240°=11点钟），
             // 即 300°~600° 共 300° 的弧，顶部 240°~300°（11点~1点）留 60° 缺口，
@@ -260,6 +261,25 @@ fun WearPlayerScreen(
                     ),
                     strokeWidth = ringStrokeDp,
                     gapSize = 0.dp,
+                )
+            } else {
+                // 波浪圆环（样式 1）：轨道平弧 + 进度正弦波（官方同款振幅 ramp 与流动）
+                WavyCircularProgressIndicator(
+                    progress = animatedProgress,
+                    modifier = Modifier
+                        .size(bigRingDiam)
+                        .align(Alignment.Center)
+                        .offset(y = ringCenterOffsetY),
+                    color = themeColor,
+                    trackColor = Color(0x22FFFFFF),
+                    strokeWidth = ringStrokeDp,
+                    trackStrokeWidth = ringStrokeDp,
+                    // 波幅随环宽缩放（官方线性默认波幅:环宽 ≈ 3:4），下限 2.5dp 保证可见
+                    amplitude = (ringStrokeDp * 0.75f).coerceAtLeast(2.5.dp),
+                    wavelength = 40.dp,
+                    gapSize = 4.dp,
+                    startAngle = 300f,
+                    sweepAngle = 300f,
                 )
             }
 
@@ -347,19 +367,6 @@ fun WearPlayerScreen(
                     }
 
                     Spacer(Modifier.size(smallGap))
-
-                    // 波浪进度条（样式 1）：M3E 官方 LinearWavyProgressIndicator 同款，
-                    // 置于底部三键上方；圆环样式（0）下不显示——进度由进度环承载
-                    if (progressStyle == SettingsRepository.PROGRESS_STYLE_WAVY) {
-                        WavyProgressIndicator(
-                            progress = animatedProgress,
-                            modifier = Modifier
-                                .fillMaxWidth(0.58f)
-                                .height(9.dp),
-                            color = themeColor,
-                            trackColor = Color(0x22FFFFFF),
-                        )
-                    }
 
                     // 弹性间距：让底部按钮落在安全圆下半区
                     Spacer(Modifier.weight(0.95f))
