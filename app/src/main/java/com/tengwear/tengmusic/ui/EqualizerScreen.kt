@@ -39,6 +39,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
@@ -52,6 +53,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.math.roundToInt
 import androidx.compose.foundation.focusable
+import androidx.compose.material3.CircularWavyProgressIndicator
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumnDefaults
 import androidx.wear.compose.foundation.lazy.items
@@ -409,7 +411,7 @@ fun AudioSettingsScreen(
                             },
                             colors = accentRadioColors(accent),
                         )
-                        // 波浪圆环（M3E 官方 CircularWavyProgressIndicator 同款）
+                        // 波浪圆环（M3E 官方 CircularWavyProgressIndicator 构件本体）
                         RadioButton(
                             selected = progressStyle == SettingsRepository.PROGRESS_STYLE_WAVY,
                             onSelect = {
@@ -427,16 +429,27 @@ fun AudioSettingsScreen(
                                         color = Color.White,
                                         modifier = Modifier.weight(1f),
                                     )
-                                    WavyCircularProgressIndicatorPreview(
+                                    CircularWavyProgressIndicator(
+                                        progress = { 0.65f },
+                                        modifier = Modifier.size(26.dp),
                                         color = accent,
                                         trackColor = Color(0x22FFFFFF),
+                                        // Stroke.width 是 Float（像素）
+                                        stroke = Stroke(
+                                            width = with(LocalDensity.current) { 2.5.dp.toPx() },
+                                            cap = StrokeCap.Round,
+                                        ),
+                                        // 官方默认振幅 ramp：65% 处于中段 → 满幅波浪
+                                        amplitude = { p ->
+                                            if (p <= 0.1f || p >= 0.95f) 0f else 1f
+                                        },
                                     )
                                 }
                             },
                             colors = accentRadioColors(accent),
                         )
                         Text(
-                            "二选一切换，立即生效；波浪圆环为 M3E 官方 CircularWavyProgressIndicator 同款：轨道为平弧，进度是沿弧流动的正弦波",
+                            "二选一切换，立即生效；波浪圆环为 M3E 官方 CircularWavyProgressIndicator 构件：轨道是平滑弧线，进度是沿弧流动的波浪，暂停时恢复平滑圆环",
                             fontSize = 8.sp,
                             color = Color.Gray,
                             textAlign = TextAlign.Center,

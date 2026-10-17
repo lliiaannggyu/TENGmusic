@@ -43,6 +43,8 @@ import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.LibraryMusic
+import androidx.compose.material3.CircularWavyProgressIndicator
+import androidx.compose.material3.WavyProgressIndicatorDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -55,11 +57,21 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Outline
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathOperation
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asComposeRenderEffect
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.rotary.onRotaryScrollEvent
 import androidx.compose.ui.input.pointer.pointerInput
@@ -69,8 +81,10 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.wear.compose.material3.CircularProgressIndicator
@@ -82,8 +96,12 @@ import coil.compose.AsyncImage
 import com.tengwear.tengmusic.PlayMode
 import com.tengwear.tengmusic.PlayerViewModel
 import com.tengwear.tengmusic.SettingsRepository
+import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.sin
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 private val ACCENT = Color(0xFF34C7F4)
@@ -240,12 +258,14 @@ fun WearPlayerScreen(
 
             // 进度环（样式 0）：按屏幕短边计算直径，圆心补偿 TimeText 内缩后居中于屏幕中心，
             // 使其真正贴近圆屏边缘（文字/按钮仍按内容盒安全圆排布，避开 TimeText）。
-            // 波浪圆环（样式 1）占据同一位置——M3E 官方 CircularWavyProgressIndicator 同款：
-            // 轨道为普通弧线，进度部分为沿弧流动的正弦波。
+            // 波浪圆环（样式 1）占据同一位置——Google 官方 M3E 构件
+            // CircularWavyProgressIndicator（material3 1.5.0-beta01，非自绘）：
+            // 轨道为平滑弧线，进度部分为沿弧流动的波浪；暂停时振幅归零，波浪平滑
+            // 退化为完整圆环，播放时才流动（官方默认行为）。
             // 角度语义（Compose）：0°=3点钟，顺时针增大，270°=12点钟。
-            // startAngle=300°（1点钟）顺时针扫到 endAngle=600°（等价 240°=11点钟），
-            // 即 300°~600° 共 300° 的弧，顶部 240°~300°（11点~1点）留 60° 缺口，
-            // 避开 AppScaffold 的系统时钟 TimeText，解决「时钟遮挡进度条」问题。
+            // 样式 0 用 startAngle=300°→endAngle=600°（等价 240°）共 300° 的弧，
+            // 顶部 240°~300°（11点~1点）留 60° 缺口，避开 AppScaffold 的系统时钟
+            // TimeText，解决「时钟遮挡进度条」问题。
             if (progressStyle == SettingsRepository.PROGRESS_STYLE_RING) {
                 CircularProgressIndicator(
                     progress = { animatedProgress },
@@ -263,24 +283,57 @@ fun WearPlayerScreen(
                     gapSize = 0.dp,
                 )
             } else {
-                // 波浪圆环（样式 1）：轨道平弧 + 进度正弦波（官方同款振幅 ramp 与流动）
-                WavyCircularProgressIndicator(
-                    progress = animatedProgress,
+                // 波浪圆环（样式 1）：官方 CircularWavyProgressIndicator。
+                // 官方构件内部固定 .size(48dp)（CircularContainerSize token），且该
+                // .size() 位于外部 modifier 之后——直接传 size 会被内部覆盖。因此用
+                // graphicsLayer 等比放大到目标直径：描边/波长/振幅/间隙全部同步缩放，
+                // 视觉比例与官方 48dp 小环完全一致（这就是"官方美学"）。
+                // 顶部 240°~300° 挖 60° 楔形缺口避让 TimeText（官方构件无角度参数，
+                // 用 clip 实现，与样式 0 的缺口位置一致）。
+                val ringScale = bigRingDiam / WavyProgressIndicatorDefaults.CircularContainerSize
+                // 用户设置的环粗换算到 48dp 官方画布；极端小环时限制上限防止糊成一团
+                val canvasStroke = (ringStrokeDp / ringScale).coerceIn(1.dp, 8.dp)
+                Box(
                     modifier = Modifier
                         .size(bigRingDiam)
                         .align(Alignment.Center)
-                        .offset(y = ringCenterOffsetY),
-                    color = themeColor,
-                    trackColor = Color(0x22FFFFFF),
-                    strokeWidth = ringStrokeDp,
-                    trackStrokeWidth = ringStrokeDp,
-                    // 波幅随环宽缩放（官方线性默认波幅:环宽 ≈ 3:4），下限 2.5dp 保证可见
-                    amplitude = (ringStrokeDp * 0.75f).coerceAtLeast(2.5.dp),
-                    wavelength = 40.dp,
-                    gapSize = 4.dp,
-                    startAngle = 300f,
-                    sweepAngle = 300f,
-                )
+                        .offset(y = ringCenterOffsetY)
+                        .clip(timeTextNotchShape()),
+                ) {
+                    CircularWavyProgressIndicator(
+                        progress = { animatedProgress },
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .scale(ringScale)
+                            // 官方进度从 3 点钟起顺时针扫；旋转 -90° 改为从 12 点
+                            // 钟起扫——播放到一半时波浪在右半弧、平滑轨在左半弧，
+                            // 与参考形态一致（顶部 60° 缺口同时避开 TimeText）
+                            .rotate(-90f),
+                        color = themeColor,
+                        trackColor = Color(0x22FFFFFF),
+                        // Stroke.width 是 Float（像素），需把 Dp 换算成 px
+                        stroke = Stroke(
+                            width = with(density) { canvasStroke.toPx() },
+                            cap = StrokeCap.Round,
+                        ),
+                        trackStroke = Stroke(
+                            width = with(density) { canvasStroke.toPx() },
+                            cap = StrokeCap.Round,
+                        ),
+                        // 官方默认振幅 ramp：进度 ≤10% 或 ≥95% 时振幅 0（首尾平弧）；
+                        // 叠加暂停门控——暂停时整体归零，官方内部会把波浪平滑过渡回
+                        // 平滑圆环（DecreasingAmplitudeAnimationSpec），松播再流动。
+                        amplitude = { p ->
+                            if (!isPlaying) 0f
+                            else if (p <= 0.1f || p >= 0.95f) 0f
+                            else 1f
+                        },
+                        // 波长/间隙用官方 token（15dp / 4dp）；流速默认 = 波长
+                        //（1 波长/秒），不传即官方行为
+                        wavelength = WavyProgressIndicatorDefaults.CircularWavelength,
+                        gapSize = WavyProgressIndicatorDefaults.CircularIndicatorTrackGapSize,
+                    )
+                }
             }
 
             Box(
@@ -580,28 +633,29 @@ private fun PrevNextButton(
             .pointerInput(Unit) {
                 detectTapGestures(
                     onPress = {
+                        // v1.25 修复「长按快进松手后失控」：旧写法在 onPress 作用域
+                        // 内外各调一次 tryAwaitRelease()，且外层 timer.cancel() 与
+                        // 内层 job.cancel() 存在竞态——外层先取消时，内层
+                        // while(true) 的连续 seek 循环永远不退出，表现为松手后进度
+                        // 狂奔、跳下一首、继续快进根本停不下来。
+                        // 新写法：tryAwaitRelease() 全程只调一次（它就是松手信号），
+                        // 连续 seek 收敛到同一个协程，松手后由本协程 cancel 它，
+                        // 从结构上杜绝竞态；短按判定改用 longPressed 标志。
                         val step = if (isPrev) -3000L else 3000L
-                        var seekStarted = false
-                        // 绑定到 PressGestureScope 的等待松手函数，供子协程调用
-                        val awaitRelease: suspend () -> Boolean = this::tryAwaitRelease
-                        val timer = scope.launch {
+                        var longPressed = false
+                        val seekJob = scope.launch {
                             delay(350) // 长按阈值：超过才进入连续 seek
-                            seekStarted = true
-                            val job = scope.launch {
+                            longPressed = true
+                            onSeekDelta(step)
+                            while (isActive) {
+                                delay(200)
                                 onSeekDelta(step)
-                                delay(120)
-                                while (true) {
-                                    onSeekDelta(step)
-                                    delay(200)
-                                }
                             }
-                            awaitRelease() // 松手才停
-                            job.cancel()
                         }
-                        val released = tryAwaitRelease()
-                        timer.cancel()
+                        val released = tryAwaitRelease() // 唯一一次：阻塞到松手
+                        seekJob.cancel() // 松手必停；短按时 seekJob 未开始 seek，取消无副作用
                         // 仅在「短按松手」时切歌；长按（已触发连续 seek）松手不再切歌
-                        if (released && !seekStarted) onClickOnce()
+                        if (released && !longPressed) onClickOnce()
                     }
                 )
             },
@@ -613,6 +667,45 @@ private fun PrevNextButton(
             tint = iconColor,
             modifier = Modifier.size(size * 0.55f),
         )
+    }
+}
+
+/**
+ * 顶部楔形缺口裁剪：挖掉圆环盒顶部 60°（Compose 角度 240°~300°，即 12 点方向 ±30°），
+ * 避开 AppScaffold 的系统时钟 TimeText。用于官方 CircularWavyProgressIndicator
+ * （该构件无起始角参数，无法像 CircularProgressIndicator 那样传 startAngle/endAngle，
+ * 故用 clip 实现同样位置、同样角度的缺口）。
+ */
+private fun timeTextNotchShape(): Shape = object : Shape {
+    override fun createOutline(
+        size: Size,
+        layoutDirection: LayoutDirection,
+        density: Density,
+    ): Outline {
+        val full = Path().apply { addRect(Rect(0f, 0f, size.width, size.height)) }
+        val cx = size.width / 2f
+        val cy = size.height / 2f
+        // 缺口扇形的半径取 1.5 倍半宽，保证圆弧段超出盒边界，缺口切穿顶边
+        val r = maxOf(cx, cy) * 1.5f
+        val a1 = 240.0 // Compose 角度：0°=3点钟，顺时针为正；240°≈11点方向
+        val a2 = 300.0 // 300°≈1点方向
+        val wedge = Path().apply {
+            moveTo(cx, cy)
+            lineTo(
+                cx + r * cos(a1 * PI / 180).toFloat(),
+                cy + r * sin(a1 * PI / 180).toFloat(),
+            )
+            arcTo(
+                rect = Rect(cx - r, cy - r, cx + r, cy + r),
+                startAngleDegrees = a1.toFloat(),
+                sweepAngleDegrees = (a2 - a1).toFloat(),
+                forceMoveTo = false,
+            )
+            close()
+        }
+        val result = Path()
+        result.op(full, wedge, PathOperation.Difference)
+        return Outline.Generic(result)
     }
 }
 
