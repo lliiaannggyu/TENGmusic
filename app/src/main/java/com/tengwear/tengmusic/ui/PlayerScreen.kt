@@ -27,12 +27,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentHeight
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.RepeatOne
 import androidx.compose.material.icons.filled.Shuffle
@@ -41,9 +39,10 @@ import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.VolumeDown
 import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.VolumeUp
-import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material3.CircularWavyProgressIndicator
+import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.WavyProgressIndicatorDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -60,15 +59,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Outline
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.PathOperation
-import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -81,25 +75,18 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.Icon
-import androidx.wear.compose.material3.IconButton
 import androidx.wear.compose.material3.ProgressIndicatorDefaults
 import androidx.wear.compose.material3.Text
 import coil.compose.AsyncImage
 import com.tengwear.tengmusic.PlayMode
 import com.tengwear.tengmusic.PlayerViewModel
 import com.tengwear.tengmusic.SettingsRepository
-import kotlin.math.PI
 import kotlin.math.abs
-import kotlin.math.cos
-import kotlin.math.sin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -258,14 +245,12 @@ fun WearPlayerScreen(
 
             // 进度环（样式 0）：按屏幕短边计算直径，圆心补偿 TimeText 内缩后居中于屏幕中心，
             // 使其真正贴近圆屏边缘（文字/按钮仍按内容盒安全圆排布，避开 TimeText）。
-            // 波浪圆环（样式 1）占据同一位置——Google 官方 M3E 构件
-            // CircularWavyProgressIndicator（material3 1.5.0-beta01，非自绘）：
-            // 轨道为平滑弧线，进度部分为沿弧流动的波浪；暂停时振幅归零，波浪平滑
-            // 退化为完整圆环，播放时才流动（官方默认行为）。
             // 角度语义（Compose）：0°=3点钟，顺时针增大，270°=12点钟。
-            // 样式 0 用 startAngle=300°→endAngle=600°（等价 240°）共 300° 的弧，
-            // 顶部 240°~300°（11点~1点）留 60° 缺口，避开 AppScaffold 的系统时钟
-            // TimeText，解决「时钟遮挡进度条」问题。
+            // startAngle=300°（1点钟）顺时针扫到 endAngle=600°（等价 240°=11点钟），
+            // 即 300°~600° 共 300° 的弧，顶部 240°~300°（11点~1点）留 60° 缺口，
+            // 避开 AppScaffold 的系统时钟 TimeText，解决「时钟遮挡进度条」问题。
+            // 波浪圆环（样式 1）不在此处渲染——v1.26 起改为围绕播放/暂停圆形按钮
+            // 转动（见主控三键处的官方 CircularWavyProgressIndicator）。
             if (progressStyle == SettingsRepository.PROGRESS_STYLE_RING) {
                 CircularProgressIndicator(
                     progress = { animatedProgress },
@@ -282,58 +267,6 @@ fun WearPlayerScreen(
                     strokeWidth = ringStrokeDp,
                     gapSize = 0.dp,
                 )
-            } else {
-                // 波浪圆环（样式 1）：官方 CircularWavyProgressIndicator。
-                // 官方构件内部固定 .size(48dp)（CircularContainerSize token），且该
-                // .size() 位于外部 modifier 之后——直接传 size 会被内部覆盖。因此用
-                // graphicsLayer 等比放大到目标直径：描边/波长/振幅/间隙全部同步缩放，
-                // 视觉比例与官方 48dp 小环完全一致（这就是"官方美学"）。
-                // 顶部 240°~300° 挖 60° 楔形缺口避让 TimeText（官方构件无角度参数，
-                // 用 clip 实现，与样式 0 的缺口位置一致）。
-                val ringScale = bigRingDiam / WavyProgressIndicatorDefaults.CircularContainerSize
-                // 用户设置的环粗换算到 48dp 官方画布；极端小环时限制上限防止糊成一团
-                val canvasStroke = (ringStrokeDp / ringScale).coerceIn(1.dp, 8.dp)
-                Box(
-                    modifier = Modifier
-                        .size(bigRingDiam)
-                        .align(Alignment.Center)
-                        .offset(y = ringCenterOffsetY)
-                        .clip(timeTextNotchShape()),
-                ) {
-                    CircularWavyProgressIndicator(
-                        progress = { animatedProgress },
-                        modifier = Modifier
-                            .align(Alignment.Center)
-                            .scale(ringScale)
-                            // 官方进度从 3 点钟起顺时针扫；旋转 -90° 改为从 12 点
-                            // 钟起扫——播放到一半时波浪在右半弧、平滑轨在左半弧，
-                            // 与参考形态一致（顶部 60° 缺口同时避开 TimeText）
-                            .rotate(-90f),
-                        color = themeColor,
-                        trackColor = Color(0x22FFFFFF),
-                        // Stroke.width 是 Float（像素），需把 Dp 换算成 px
-                        stroke = Stroke(
-                            width = with(density) { canvasStroke.toPx() },
-                            cap = StrokeCap.Round,
-                        ),
-                        trackStroke = Stroke(
-                            width = with(density) { canvasStroke.toPx() },
-                            cap = StrokeCap.Round,
-                        ),
-                        // 官方默认振幅 ramp：进度 ≤10% 或 ≥95% 时振幅 0（首尾平弧）；
-                        // 叠加暂停门控——暂停时整体归零，官方内部会把波浪平滑过渡回
-                        // 平滑圆环（DecreasingAmplitudeAnimationSpec），松播再流动。
-                        amplitude = { p ->
-                            if (!isPlaying) 0f
-                            else if (p <= 0.1f || p >= 0.95f) 0f
-                            else 1f
-                        },
-                        // 波长/间隙用官方 token（15dp / 4dp）；流速默认 = 波长
-                        //（1 波长/秒），不传即官方行为
-                        wavelength = WavyProgressIndicatorDefaults.CircularWavelength,
-                        gapSize = WavyProgressIndicatorDefaults.CircularIndicatorTrackGapSize,
-                    )
-                }
             }
 
             Box(
@@ -387,9 +320,18 @@ fun WearPlayerScreen(
                     Spacer(Modifier.weight(0.85f))
 
                     // ===== 中间：主控三键（播放键=圆形，切歌键=横向胶囊）=====
+                    // 波浪主题（样式 1）：官方波浪进度环围绕播放/暂停圆形按钮转动，
+                    // 完整一圈（播放键在屏幕中下部，无需避让顶部 TimeText）。
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(ctrlGap),
+                        horizontalArrangement = Arrangement.spacedBy(
+                            // 波浪环比播放键大一圈，键距适当加宽，避免环线搭到切歌键
+                            if (progressStyle == SettingsRepository.PROGRESS_STYLE_WAVY) {
+                                d * 0.055f
+                            } else {
+                                ctrlGap
+                            }
+                        ),
                     ) {
                         PrevNextButton(
                             isPrev = true,
@@ -400,14 +342,66 @@ fun WearPlayerScreen(
                             background = ctrlBg,
                             iconColor = ctrlIcon,
                         )
-                        PlayPauseButton(
-                            isPlaying = isPlaying,
-                            onToggle = vm::togglePlay,
-                            size = playSize,
-                            pill = false,
-                            background = playBg,
-                            iconColor = playIcon,
-                        )
+                        if (progressStyle == SettingsRepository.PROGRESS_STYLE_WAVY) {
+                            // 波浪环围绕播放键：官方构件内部固定 48dp 画布，用
+                            // graphicsLayer 等比放大到环径；描边/波长/间隙按官方
+                            // token 比例同步缩放；rotate(-90) 使进度从 12 点顺时针扫。
+                            val ringDiam: Dp = playSize * 1.28f
+                            val ringScale =
+                                ringDiam / WavyProgressIndicatorDefaults.CircularContainerSize
+                            // 围绕按钮的小环用更细的线（上限 4dp），避免糊成一团
+                            val wavyStrokeDp: Dp = ringStrokeDp.coerceAtMost(4.dp)
+                            Box(
+                                modifier = Modifier.size(ringDiam),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                CircularWavyProgressIndicator(
+                                    progress = { animatedProgress },
+                                    modifier = Modifier
+                                        .align(Alignment.Center)
+                                        .scale(ringScale)
+                                        .rotate(-90f),
+                                    color = themeColor,
+                                    trackColor = Color(0x22FFFFFF),
+                                    // Stroke.width 是 Float（像素）：Dp → px → 画布比例
+                                    stroke = Stroke(
+                                        width = with(density) { wavyStrokeDp.toPx() } / ringScale,
+                                        cap = StrokeCap.Round,
+                                    ),
+                                    trackStroke = Stroke(
+                                        width = with(density) { wavyStrokeDp.toPx() } / ringScale,
+                                        cap = StrokeCap.Round,
+                                    ),
+                                    // 官方默认振幅 ramp + 暂停门控：暂停归零 →
+                                    // 官方缓动平滑退化为圆环，播放才恢复流动
+                                    amplitude = { p ->
+                                        if (!isPlaying) 0f
+                                        else if (p <= 0.1f || p >= 0.95f) 0f
+                                        else 1f
+                                    },
+                                    wavelength = WavyProgressIndicatorDefaults.CircularWavelength,
+                                    gapSize =
+                                        WavyProgressIndicatorDefaults.CircularIndicatorTrackGapSize,
+                                )
+                                PlayPauseButton(
+                                    isPlaying = isPlaying,
+                                    onToggle = vm::togglePlay,
+                                    size = playSize,
+                                    pill = false,
+                                    background = playBg,
+                                    iconColor = playIcon,
+                                )
+                            }
+                        } else {
+                            PlayPauseButton(
+                                isPlaying = isPlaying,
+                                onToggle = vm::togglePlay,
+                                size = playSize,
+                                pill = false,
+                                background = playBg,
+                                iconColor = playIcon,
+                            )
+                        }
                         PrevNextButton(
                             isPrev = false,
                             size = sideSize,
@@ -577,7 +571,12 @@ fun WearPlayerScreen(
     }
 }
 
-/** 播放/暂停主按钮：默认圆形；M3E 主题下改成长条形胶囊（pill） */
+/** 播放/暂停主按钮：M3E 官方 FilledIconButton（内置挤压动画）。
+ * 官方挤压动画原理：shapes 的 shape（CornerFull 圆形）与 pressedShape
+ * （CornerSmall 小圆角）在按压时由官方 rememberAnimatedShape + motion spec
+ * 平滑插值——容器形状"方圆"渐变，即 M3E 的挤压效果，全部官方代码。
+ * 注意：官方 clickable 自带 focusable，会抢走播放器根节点的表冠焦点，
+ * 用 focusProperties { canFocus = false } 禁用后代获焦，表冠调节不受影响。 */
 @Composable
 private fun PlayPauseButton(
     isPlaying: Boolean,
@@ -587,19 +586,16 @@ private fun PlayPauseButton(
     iconColor: Color = Color.White,
     pill: Boolean = false,
 ) {
-    val shape = if (pill) RoundedCornerShape(percent = 50) else CircleShape
-    val boxW = if (pill) size * 1.6f else size
-    Box(
+    FilledIconButton(
+        onClick = onToggle,
+        shapes = IconButtonDefaults.shapes(shape = RoundedCornerShape(percent = 50)),
         modifier = Modifier
-            .size(boxW, size)
-            .clip(shape)
-            .background(background)
-            // 用 detectTapGestures 而非 clickable：clickable 自带 focusable，
-            // 点击后会抢走播放器根节点的表冠焦点，导致表冠失灵
-            .pointerInput(Unit) {
-                detectTapGestures(onTap = { onToggle() })
-            },
-        contentAlignment = Alignment.Center,
+            .size(if (pill) size * 1.6f else size)
+            .focusProperties { canFocus = false },
+        colors = IconButtonDefaults.filledIconButtonColors(
+            containerColor = background,
+            contentColor = iconColor,
+        ),
     ) {
         Icon(
             imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
@@ -610,7 +606,10 @@ private fun PlayPauseButton(
     }
 }
 
-/** 上一首 / 下一首：短按切歌；长按连续快进/快退，松手即停且不再触发切歌 */
+/** 上一首 / 下一首：短按切歌；长按连续快进/快退，松手即停且不再触发切歌。
+ * 容器为 M3E 官方 FilledIconButton（内置挤压动画，同播放键）；
+ * 官方 clickable 的 onClick 置空，点击/长按全部由下方 onPress 手势接管
+ * （避免与官方点击双触发），focusProperties 禁用获焦保住表冠焦点。 */
 @Composable
 private fun PrevNextButton(
     isPrev: Boolean,
@@ -622,14 +621,15 @@ private fun PrevNextButton(
     pill: Boolean = false,
 ) {
     val scope = rememberCoroutineScope()
-    val shape = if (pill) RoundedCornerShape(percent = 50) else CircleShape
     // 胶囊态刻意拉宽（宽 > 高），形成横向长条胶囊；圆形态保持正方形
     val boxW = if (pill) size * 1.32f else size
-    Box(
+    FilledIconButton(
+        // 点击/长按由下方 onPress 全权处理，防止与官方 clickable 双触发
+        onClick = {},
+        shapes = IconButtonDefaults.shapes(shape = RoundedCornerShape(percent = 50)),
         modifier = Modifier
             .size(boxW, size)
-            .clip(shape)
-            .background(background)
+            .focusProperties { canFocus = false }
             .pointerInput(Unit) {
                 detectTapGestures(
                     onPress = {
@@ -659,7 +659,10 @@ private fun PrevNextButton(
                     }
                 )
             },
-        contentAlignment = Alignment.Center,
+        colors = IconButtonDefaults.filledIconButtonColors(
+            containerColor = background,
+            contentColor = iconColor,
+        ),
     ) {
         Icon(
             imageVector = if (isPrev) Icons.Filled.SkipPrevious else Icons.Filled.SkipNext,
@@ -667,45 +670,6 @@ private fun PrevNextButton(
             tint = iconColor,
             modifier = Modifier.size(size * 0.55f),
         )
-    }
-}
-
-/**
- * 顶部楔形缺口裁剪：挖掉圆环盒顶部 60°（Compose 角度 240°~300°，即 12 点方向 ±30°），
- * 避开 AppScaffold 的系统时钟 TimeText。用于官方 CircularWavyProgressIndicator
- * （该构件无起始角参数，无法像 CircularProgressIndicator 那样传 startAngle/endAngle，
- * 故用 clip 实现同样位置、同样角度的缺口）。
- */
-private fun timeTextNotchShape(): Shape = object : Shape {
-    override fun createOutline(
-        size: Size,
-        layoutDirection: LayoutDirection,
-        density: Density,
-    ): Outline {
-        val full = Path().apply { addRect(Rect(0f, 0f, size.width, size.height)) }
-        val cx = size.width / 2f
-        val cy = size.height / 2f
-        // 缺口扇形的半径取 1.5 倍半宽，保证圆弧段超出盒边界，缺口切穿顶边
-        val r = maxOf(cx, cy) * 1.5f
-        val a1 = 240.0 // Compose 角度：0°=3点钟，顺时针为正；240°≈11点方向
-        val a2 = 300.0 // 300°≈1点方向
-        val wedge = Path().apply {
-            moveTo(cx, cy)
-            lineTo(
-                cx + r * cos(a1 * PI / 180).toFloat(),
-                cy + r * sin(a1 * PI / 180).toFloat(),
-            )
-            arcTo(
-                rect = Rect(cx - r, cy - r, cx + r, cy + r),
-                startAngleDegrees = a1.toFloat(),
-                sweepAngleDegrees = (a2 - a1).toFloat(),
-                forceMoveTo = false,
-            )
-            close()
-        }
-        val result = Path()
-        result.op(full, wedge, PathOperation.Difference)
-        return Outline.Generic(result)
     }
 }
 
@@ -781,6 +745,8 @@ private fun TriPill(
     }
 }
 
+/** 底部三瓣中的一节：M3E 官方 FilledIconButton（透明容器，保留三瓣长胶囊的
+ * 整体视觉；按压时显示官方 ripple 与形状 morph 挤压动画）。 */
 @Composable
 private fun TriSection(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
@@ -788,14 +754,17 @@ private fun TriSection(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Box(
+    FilledIconButton(
+        onClick = onClick,
+        shapes = IconButtonDefaults.shapes(shape = RoundedCornerShape(percent = 50)),
         modifier = modifier
-            .fillMaxSize()
-            // detectTapGestures 不抢焦点：表冠焦点始终留在播放器根节点
-            .pointerInput(Unit) {
-                detectTapGestures(onTap = { onClick() })
-            },
-        contentAlignment = Alignment.Center,
+            .fillMaxHeight()
+            // 官方 clickable 自带 focusable：禁用获焦，表冠焦点留在播放器根节点
+            .focusProperties { canFocus = false },
+        colors = IconButtonDefaults.filledIconButtonColors(
+            containerColor = Color.Transparent,
+            contentColor = tint,
+        ),
     ) {
         Icon(
             imageVector = icon,

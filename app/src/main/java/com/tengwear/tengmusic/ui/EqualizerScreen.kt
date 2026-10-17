@@ -449,7 +449,7 @@ fun AudioSettingsScreen(
                             colors = accentRadioColors(accent),
                         )
                         Text(
-                            "二选一切换，立即生效；波浪圆环为 M3E 官方 CircularWavyProgressIndicator 构件：轨道是平滑弧线，进度是沿弧流动的波浪，暂停时恢复平滑圆环",
+                            "二选一切换，立即生效；波浪圆环为 M3E 官方 CircularWavyProgressIndicator 构件：波浪进度环围绕播放/暂停圆形按钮转动，轨道是平滑弧线，进度是沿弧流动的波浪，暂停时恢复平滑圆环；播放器按钮均为 M3E 官方构件，按压时带官方挤压动画",
                             fontSize = 8.sp,
                             color = Color.Gray,
                             textAlign = TextAlign.Center,
