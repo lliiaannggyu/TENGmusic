@@ -149,6 +149,14 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     private val _ringStroke = MutableStateFlow(SettingsRepository.getRingStroke(getApplication()))
     val ringStroke = _ringStroke.asStateFlow()
 
+    /**
+     * 进度条样式：0 = 圆环（默认），1 = 波浪（M3E 官方 LinearWavyProgressIndicator
+     * 同款正弦丝带）。两种样式互斥，设置页可切换。
+     */
+    private val _progressStyle =
+        MutableStateFlow(SettingsRepository.getProgressStyle(getApplication()))
+    val progressStyle = _progressStyle.asStateFlow()
+
     // ---------------- 背景观感（播放页专辑封面背景） ----------------
 
     /** 背景模糊半径（dp），0 = 不模糊 */
@@ -678,6 +686,17 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     fun setRingStroke(dp: Float) {
         _ringStroke.value = dp.coerceIn(2f, 12f)
         SettingsRepository.setRingStroke(getApplication(), dp)
+    }
+
+    /** 切换进度条样式（0 = 圆环，1 = 波浪） */
+    fun setProgressStyle(style: Int) {
+        val v = if (style == SettingsRepository.PROGRESS_STYLE_WAVY) {
+            SettingsRepository.PROGRESS_STYLE_WAVY
+        } else {
+            SettingsRepository.PROGRESS_STYLE_RING
+        }
+        _progressStyle.value = v
+        SettingsRepository.setProgressStyle(getApplication(), v)
     }
 
     // ---------------- EQ ----------------

@@ -24,6 +24,18 @@ object SettingsRepository {
     /** 进度环描边粗细（dp） */
     private const val KEY_RING_STROKE = "ring_stroke"
 
+    /**
+     * 进度条样式：0 = 圆环（默认，经典进度环），1 = 波浪（M3E 官方
+     * LinearWavyProgressIndicator 同款正弦丝带进度条）。
+     */
+    private const val KEY_PROGRESS_STYLE = "progress_style"
+
+    /** 进度条样式：圆环 */
+    const val PROGRESS_STYLE_RING = 0
+
+    /** 进度条样式：波浪（M3E 官方波浪形） */
+    const val PROGRESS_STYLE_WAVY = 1
+
     /** 歌词切换动画（LyricTransition.ordinal） */
     private const val KEY_LYRIC_TRANSITION = "lyric_transition"
 
@@ -84,6 +96,19 @@ object SettingsRepository {
         context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
             .edit()
             .putFloat(KEY_RING_STROKE, dp.coerceIn(2f, 12f))
+            .apply()
+    }
+
+    /** 进度条样式（0 = 圆环，1 = 波浪），默认圆环 */
+    fun getProgressStyle(context: Context): Int =
+        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+            .getInt(KEY_PROGRESS_STYLE, PROGRESS_STYLE_RING)
+
+    fun setProgressStyle(context: Context, style: Int) {
+        val v = if (style == PROGRESS_STYLE_WAVY) PROGRESS_STYLE_WAVY else PROGRESS_STYLE_RING
+        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+            .edit()
+            .putInt(KEY_PROGRESS_STYLE, v)
             .apply()
     }
 

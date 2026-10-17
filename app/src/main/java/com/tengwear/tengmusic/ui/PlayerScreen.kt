@@ -81,6 +81,7 @@ import androidx.wear.compose.material3.Text
 import coil.compose.AsyncImage
 import com.tengwear.tengmusic.PlayMode
 import com.tengwear.tengmusic.PlayerViewModel
+import com.tengwear.tengmusic.SettingsRepository
 import kotlin.math.abs
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -117,6 +118,8 @@ fun WearPlayerScreen(
     val dimAlpha by vm.dimAlpha.collectAsState()
     val ringRadiusFrac by vm.ringRadiusFrac.collectAsState()
     val ringStroke by vm.ringStroke.collectAsState()
+    // 进度条样式：0 = 圆环（默认），1 = 波浪（M3E 官方 LinearWavyProgressIndicator 同款）
+    val progressStyle by vm.progressStyle.collectAsState()
     val lyricColor by vm.lyricColor.collectAsState()
     val current = tracks.getOrNull(index)
     val progress = if (duration > 0) position.toFloat() / duration.toFloat() else 0f
@@ -235,27 +238,30 @@ fun WearPlayerScreen(
             val playIcon = Color.White
             val modeTint = if (playMode == PlayMode.SEQUENTIAL) Color(0xFF7A7A8C) else themeColor
 
-            // 进度环：按屏幕短边计算直径，圆心补偿 TimeText 内缩后居中于屏幕中心，
+            // 进度环（样式 0）：按屏幕短边计算直径，圆心补偿 TimeText 内缩后居中于屏幕中心，
             // 使其真正贴近圆屏边缘（文字/按钮仍按内容盒安全圆排布，避开 TimeText）。
+            // 波浪样式（1）下隐藏——进度由底部波浪进度条显示（见下方）。
             // 角度语义（Compose）：0°=3点钟，顺时针增大，270°=12点钟。
             // startAngle=300°（1点钟）顺时针扫到 endAngle=600°（等价 240°=11点钟），
             // 即 300°~600° 共 300° 的弧，顶部 240°~300°（11点~1点）留 60° 缺口，
             // 避开 AppScaffold 的系统时钟 TimeText，解决「时钟遮挡进度条」问题。
-            CircularProgressIndicator(
-                progress = { animatedProgress },
-                modifier = Modifier
-                    .size(bigRingDiam)
-                    .align(Alignment.Center)
-                    .offset(y = ringCenterOffsetY),
-                startAngle = 300f,
-                endAngle = 600f,
-                colors = ProgressIndicatorDefaults.colors(
-                    indicatorColor = themeColor,
-                    trackColor = Color(0x22FFFFFF),
-                ),
-                strokeWidth = ringStrokeDp,
-                gapSize = 0.dp,
-            )
+            if (progressStyle == SettingsRepository.PROGRESS_STYLE_RING) {
+                CircularProgressIndicator(
+                    progress = { animatedProgress },
+                    modifier = Modifier
+                        .size(bigRingDiam)
+                        .align(Alignment.Center)
+                        .offset(y = ringCenterOffsetY),
+                    startAngle = 300f,
+                    endAngle = 600f,
+                    colors = ProgressIndicatorDefaults.colors(
+                        indicatorColor = themeColor,
+                        trackColor = Color(0x22FFFFFF),
+                    ),
+                    strokeWidth = ringStrokeDp,
+                    gapSize = 0.dp,
+                )
+            }
 
             Box(
                 modifier = Modifier
@@ -341,6 +347,19 @@ fun WearPlayerScreen(
                     }
 
                     Spacer(Modifier.size(smallGap))
+
+                    // 波浪进度条（样式 1）：M3E 官方 LinearWavyProgressIndicator 同款，
+                    // 置于底部三键上方；圆环样式（0）下不显示——进度由进度环承载
+                    if (progressStyle == SettingsRepository.PROGRESS_STYLE_WAVY) {
+                        WavyProgressIndicator(
+                            progress = animatedProgress,
+                            modifier = Modifier
+                                .fillMaxWidth(0.58f)
+                                .height(9.dp),
+                            color = themeColor,
+                            trackColor = Color(0x22FFFFFF),
+                        )
+                    }
 
                     // 弹性间距：让底部按钮落在安全圆下半区
                     Spacer(Modifier.weight(0.95f))

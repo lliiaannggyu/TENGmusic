@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -57,7 +58,9 @@ import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 import androidx.wear.compose.material3.Card
 import androidx.wear.compose.material3.CardDefaults
+import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.ListHeader
+import androidx.wear.compose.material3.ProgressIndicatorDefaults
 import androidx.wear.compose.material3.RadioButton
 import androidx.wear.compose.material3.RadioButtonDefaults
 import androidx.wear.compose.material3.ScreenScaffold
@@ -70,6 +73,7 @@ import androidx.wear.compose.material3.Text
 import com.tengwear.tengmusic.BuildConfig
 import com.tengwear.tengmusic.EqPresets
 import com.tengwear.tengmusic.PlayerViewModel
+import com.tengwear.tengmusic.SettingsRepository
 import kotlin.math.abs
 import kotlin.math.ln
 
@@ -154,6 +158,8 @@ fun AudioSettingsScreen(
     val lyricFontSize by vm.lyricFontSize.collectAsState()
     val ringRadiusFrac by vm.ringRadiusFrac.collectAsState()
     val ringStroke by vm.ringStroke.collectAsState()
+    // 进度条样式（0 = 圆环，1 = 波浪），设置页可切换
+    val progressStyle by vm.progressStyle.collectAsState()
     // 设置页强调色跟随歌词主题色（专辑主色或用户自定义色）
     val lyricColor by vm.lyricColor.collectAsState()
     val lyricTransition by vm.lyricTransition.collectAsState()
@@ -363,8 +369,80 @@ fun AudioSettingsScreen(
                     }
                 }
 
-                // ========== 4. 播放器外观（进度环 / 背景）==========
+                // ========== 4. 播放器外观（进度条样式 / 进度环 / 背景）==========
                 item { ListHeader { Text("播放器外观") } }
+                // 进度条样式：圆环 / 波浪（M3E 官方 LinearWavyProgressIndicator 同款）二选一
+                item {
+                    Column(
+                        Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Text("进度条样式", fontSize = 11.sp, color = accent)
+                        // 圆环（M3E RadioButton：onSelect + label 槽位）
+                        RadioButton(
+                            selected = progressStyle == SettingsRepository.PROGRESS_STYLE_RING,
+                            onSelect = {
+                                vm.setProgressStyle(SettingsRepository.PROGRESS_STYLE_RING)
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = {
+                                Row(
+                                    Modifier.fillMaxWidth().padding(end = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        "圆环",
+                                        fontSize = 11.sp,
+                                        color = Color.White,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    CircularProgressIndicator(
+                                        progress = { 0.6f },
+                                        modifier = Modifier.size(26.dp),
+                                        colors = ProgressIndicatorDefaults.colors(
+                                            indicatorColor = accent,
+                                            trackColor = Color(0x22FFFFFF),
+                                        ),
+                                        strokeWidth = 3.dp,
+                                    )
+                                }
+                            },
+                            colors = accentRadioColors(accent),
+                        )
+                        // 波浪（M3E 官方 LinearWavyProgressIndicator 同款）
+                        RadioButton(
+                            selected = progressStyle == SettingsRepository.PROGRESS_STYLE_WAVY,
+                            onSelect = {
+                                vm.setProgressStyle(SettingsRepository.PROGRESS_STYLE_WAVY)
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = {
+                                Row(
+                                    Modifier.fillMaxWidth().padding(end = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        "波浪 · M3E 官方",
+                                        fontSize = 11.sp,
+                                        color = Color.White,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    WavyProgressIndicatorPreview(
+                                        color = accent,
+                                        trackColor = Color(0x22FFFFFF),
+                                    )
+                                }
+                            },
+                            colors = accentRadioColors(accent),
+                        )
+                        Text(
+                            "二选一切换，立即生效；波浪为 M3E 官方波浪形进度条同款",
+                            fontSize = 8.sp,
+                            color = Color.Gray,
+                            textAlign = TextAlign.Center,
+                        )
+                    }
+                }
                 // 进度环半径（占屏幕短边比例，可缩至很小）
                 item {
                     Column(
