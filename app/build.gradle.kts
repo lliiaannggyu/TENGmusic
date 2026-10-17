@@ -5,15 +5,15 @@ plugins {
 }
 
 android {
-    namespace = "com.example.wearmusic"
+    namespace = "com.tengwear.tengmusic"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.example.wearmusic"
+        applicationId = "com.tengwear.tengmusic"
         minSdk = 25          // Android 7.1：Wear OS 手表与普通安卓手机均可安装
         targetSdk = 36
-        versionCode = 6
-        versionName = "1.6"
+        versionCode = 18
+        versionName = "1.18"
     }
 
     buildFeatures {
@@ -40,8 +40,13 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
-            isShrinkResources = false
+            // R8 压缩 + 混淆：缩减体积、移除无用代码并打乱类名/方法名
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
             signingConfig = signingConfigs.getByName("release")
         }
     }

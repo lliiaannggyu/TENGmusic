@@ -19,7 +19,7 @@
 
     <application
         android:allowBackup="true"
-        android:label="WearMusic"
+        android:label="TENGMUSIC"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
 
