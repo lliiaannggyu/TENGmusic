@@ -54,7 +54,6 @@ import androidx.wear.compose.material3.ListHeader
 import androidx.wear.compose.material3.Text
 import com.tengwear.tengmusic.CategoryRepository
 import com.tengwear.tengmusic.PlayerViewModel
-import com.tengwear.tengmusic.Track
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -76,14 +75,16 @@ enum class CategoryListMode { PLAY, ASSIGN }
  * 归类列表（双击歌名 / 点底部「归类」键唤起）：
  *
  * - **播放模式**（点播放器底部「归类」键）：
- *   - 点击类别 = 播放该归类并回到播放器；
+ *   - 点击类别 = 播放该归类并回到播放器；归类解析不出曲目时停留并提示；
  *   - 长按不动 700ms 再松手 = 弹出删除确认（仅自定义类别可删）；
  *   - 长按后上下拖动 = 排序（跟手移动 + 目标高亮，松手才一次性交换，不闪跳）；
  *   - 「新增类别」按钮位于列表末尾，跟着列表一起滚动；
  *   - 列表容器为圆角胶囊（RoundedCornerShape 50%）。
  * - **归类模式**（双击播放器顶部歌名）：
  *   - 点击类别 = 把当前曲目加入该类别（收藏 = 收藏开关，已加入的再点一次 = 移出）；
- *   - 不提供排序/删除（避免误操作）。
+ *   - 使用 Card 原生 onClick（不挂自定义手势，杜绝与卡片内部 clickable 抢事件导致"点击没反应"）；
+ *   - 页面不自动退出：可连续加入多个类别，通过左上角返回键 / 系统返回退出；
+ *   - 当前没有播放中的歌曲时给出明确提示（不再静默无反馈）。
  *
  * 组件颜色跟随主题强调色（歌词色：专辑主色或用户自定义色）。
  */
@@ -92,11 +93,11 @@ fun CategoryListScreen(
     vm: PlayerViewModel,
     onClose: () -> Unit,
     mode: CategoryListMode = CategoryListMode.PLAY,
-    assignTrack: Track? = null,
 ) {
     val cats by vm.categories.collectAsState()
     val tracks by vm.tracks.collectAsState()
     val favorites by vm.favorites.collectAsState()
+    val currentTrack by vm.currentTrack.collectAsState()
     val lyricColor by vm.lyricColor.collectAsState()
     val accent = Color(lyricColor)
     val listState = rememberScalingLazyListState()
@@ -111,8 +112,15 @@ fun CategoryListScreen(
     var targetIndex by remember { mutableStateOf<Int?>(null) }
     var longJob by remember { mutableStateOf<Job?>(null) }
     var rotaryAcc by remember { mutableStateOf(0f) }
-    // 归类模式的操作反馈（短暂显示后自动关闭）
+    // 归类模式的操作反馈（短暂显示后自动消失；页面本身不自动退出）
     var assignMsg by remember { mutableStateOf<String?>(null) }
+    // 消息自动清除（1.4s）；连续操作时后到的消息会重启计时
+    LaunchedEffect(assignMsg) {
+        if (assignMsg != null) {
+            delay(1400)
+            assignMsg = null
+        }
+    }
 
     LaunchedEffect(Unit) {
         try { fr.requestFocus() } catch (_: Throwable) {}
@@ -141,9 +149,9 @@ fun CategoryListScreen(
                         fontSize = 14.sp,
                         color = Color.White,
                     )
-                    if (mode == CategoryListMode.ASSIGN && assignTrack != null) {
+                    if (mode == CategoryListMode.ASSIGN) {
                         Text(
-                            text = assignTrack.title,
+                            text = currentTrack?.title ?: "未在播放",
                             fontSize = 8.sp,
                             color = accent,
                             maxLines = 1,
@@ -178,16 +186,58 @@ fun CategoryListScreen(
                     val isDragging = draggingId == cat.id
                     val isTarget = mode == CategoryListMode.PLAY &&
                         targetIndex == i && draggingId != null && draggingId != cat.id
-                    // 归类模式：标记当前歌已在类别中的项
-                    val inCat = mode == CategoryListMode.ASSIGN && assignTrack != null &&
-                        (cat.id == CategoryRepository.ID_FAV && favorites.contains(assignTrack.id) ||
-                            (!cat.isBuiltIn && cat.trackIds.contains(assignTrack.id)))
+                    // 归类模式：标记当前歌已在类别中的项（currentTrack 为响应式 StateFlow，
+                    // 先取局部变量避免 delegated property 无法智能转换）
+                    val ct = currentTrack
+                    val inCat = mode == CategoryListMode.ASSIGN && ct != null &&
+                        (cat.id == CategoryRepository.ID_FAV && favorites.contains(ct.id) ||
+                            (!cat.isBuiltIn && cat.trackIds.contains(ct.id)))
                     Card(
-                        // 点击交互全部由下方 awaitEachGesture 统一处理（播放模式）：
+                        // 归类模式用 Card 原生 onClick：纯点击即加入/移出，不挂自定义手势，
+                        // 杜绝外层 pointerInput 与卡片内部 clickable 抢事件导致"点击没反应"。
+                        // 播放模式的点击/长按/拖动由下方 pointerInput 三态手势统一处理：
                         // 纯点击 = 播放；长按不动 = 删除确认（松手才弹）；长按后才可拖动排序；
                         // 未长按的滑动不消费、放行给列表滚动。
-                        // 归类模式：点击 = 把当前歌加入/移出该类别。
-                        onClick = {},
+                        onClick = if (mode == CategoryListMode.ASSIGN) {
+                            {
+                                val track = currentTrack
+                                if (track == null) {
+                                    // 未在播放（例如双击了"未选择音乐"标题）：明确提示，
+                                    // 不再静默无反馈，也不关闭页面
+                                    assignMsg = "当前没有播放中的歌曲"
+                                } else {
+                                    // 读实时状态，避免组合期快照过期
+                                    val latest = vm.categories.value.firstOrNull { it.id == cat.id }
+                                    val alreadyIn =
+                                        (cat.id == CategoryRepository.ID_FAV &&
+                                            vm.favorites.value.contains(track.id)) ||
+                                        (latest != null && !latest.isBuiltIn &&
+                                            latest.trackIds.contains(track.id))
+                                    when {
+                                        cat.id == CategoryRepository.ID_FAV -> {
+                                            val wasFav = vm.favorites.value.contains(track.id)
+                                            vm.toggleFavorite(track.id)
+                                            assignMsg = if (wasFav) "已取消收藏" else "已收藏"
+                                        }
+                                        cat.isBuiltIn -> {
+                                            // 全部歌曲：无需单曲加入
+                                            assignMsg = "全部歌曲包含所有曲目"
+                                        }
+                                        alreadyIn -> {
+                                            vm.removeTrackFromCategory(track.id, cat.id)
+                                            assignMsg = "已移出：${cat.name}"
+                                        }
+                                        else -> {
+                                            val ok = vm.addTrackToCategory(track.id, cat.id)
+                                            assignMsg =
+                                                if (ok) "已加入：${cat.name}" else "加入失败"
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            {}
+                        },
                         onLongClick = {},
                         modifier = Modifier
                             .fillMaxWidth(0.92f)
@@ -206,49 +256,10 @@ fun CategoryListScreen(
                                 }
                             )
                             .pointerInput(cat.id, mode) {
-                                if (mode == CategoryListMode.ASSIGN) {
-                                    // 归类模式：纯点击即加入，无长按/拖动
-                                    awaitEachGesture {
-                                        val down = awaitFirstDown(requireUnconsumed = false)
-                                        down.consume()
-                                        while (true) {
-                                            val event = awaitPointerEvent()
-                                            val change = event.changes
-                                                .firstOrNull { it.id == down.id } ?: break
-                                            if (change.changedToUp()) {
-                                                val track = assignTrack
-                                                if (track != null) {
-                                                    when {
-                                                        cat.id == CategoryRepository.ID_FAV -> {
-                                                            vm.toggleFavorite(track.id)
-                                                            assignMsg =
-                                                                if (favorites.contains(track.id)) "已取消收藏"
-                                                                else "已收藏"
-                                                        }
-                                                        cat.isBuiltIn -> {
-                                                            // 全部歌曲：无需单曲加入
-                                                            assignMsg = "全部歌曲包含所有曲目"
-                                                        }
-                                                        cat.trackIds.contains(track.id) -> {
-                                                            vm.removeTrackFromCategory(track.id, cat.id)
-                                                            assignMsg = "已移出：${cat.name}"
-                                                        }
-                                                        else -> {
-                                                            val ok = vm.addTrackToCategory(track.id, cat.id)
-                                                            assignMsg =
-                                                                if (ok) "已加入：${cat.name}" else "加入失败"
-                                                        }
-                                                    }
-                                                    scope.launch {
-                                                        delay(650)
-                                                        onClose()
-                                                    }
-                                                }
-                                                break
-                                            }
-                                        }
-                                    }
-                                } else {
+                                // 仅播放模式挂三态手势（纯点击=播放 / 长按=删除 / 拖动=排序）。
+                                // 归类模式不挂自定义手势：点击由 Card 原生 onClick 处理（见上方），
+                                // 避免外层 pointerInput 与卡片内部 clickable 抢事件导致"点击没反应"。
+                                if (mode == CategoryListMode.PLAY) {
                                     awaitEachGesture {
                                         val down = awaitFirstDown(requireUnconsumed = false)
                                         // 不 consume down：保证未长按的滑动能正常滚动列表；
@@ -297,10 +308,11 @@ fun CategoryListScreen(
                                                     }
                                                     // 长按前就滑动：视为滚动列表意图，不播放
                                                     movedEarly -> {}
-                                                    // 纯点击：播放该归类
+                                                    // 纯点击：播放该归类；
+                                                    // 空归类/未找到则停留并提示，不关页（不再静默退出）
                                                     else -> {
-                                                        vm.playCategory(cat.id)
-                                                        onClose()
+                                                        val ok = vm.playCategory(cat.id)
+                                                        if (ok) onClose() else assignMsg = "该归类暂无歌曲"
                                                     }
                                                 }
                                                 draggingId = null
@@ -406,34 +418,33 @@ fun CategoryListScreen(
                     }
                 }
 
-                // 「新增类别」按钮：放在列表末尾，跟着列表一起滚动（播放模式才显示）
-                if (mode == CategoryListMode.PLAY) {
-                    item {
-                        Button(
-                            onClick = {
-                                name = ""
-                                showNaming = true
-                            },
-                            modifier = Modifier
-                                .fillMaxWidth(0.62f)
-                                .padding(vertical = 8.dp),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.Add,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp),
-                            )
-                            Spacer(Modifier.width(4.dp))
-                            Text("新增类别", fontSize = 11.sp)
-                        }
+                // 「新增类别」按钮：放在列表末尾，跟着列表一起滚动（两种模式都显示，
+                // 归类模式下新建后可直接点它把当前歌加进去）
+                item {
+                    Button(
+                        onClick = {
+                            name = ""
+                            showNaming = true
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth(0.62f)
+                            .padding(vertical = 8.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Add,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text("新增类别", fontSize = 11.sp)
                     }
                 }
                 item { Spacer(Modifier.height(8.dp)) }
             }
 
-            // 归类模式操作反馈（底部短提示）
+            // 操作反馈（底部短提示，1.4s 自消；归类/播放模式共用，如「该归类暂无歌曲」）
             val msg = assignMsg
-            if (mode == CategoryListMode.ASSIGN && msg != null) {
+            if (msg != null) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()

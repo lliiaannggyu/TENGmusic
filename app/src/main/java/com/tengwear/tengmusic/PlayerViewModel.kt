@@ -44,9 +44,15 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     private val _currentIndex = MutableStateFlow(-1)
     val currentIndex = _currentIndex.asStateFlow()
 
-    /** 当前播放曲目（归类「双击歌名 → 加入类别」时用） */
-    val currentTrack: Track?
-        get() = _tracks.value.getOrNull(_currentIndex.value)
+    /**
+     * 当前播放曲目（归类「双击歌名 → 加入类别」时用）。
+     * 必须是 StateFlow：早期版本是普通 getter，属于一次性快照——
+     * ViewModel 重建后 _currentIndex 仍为 -1，快照永远是 null，
+     * 导致归类模式下点任何类别都静默无反馈（"添加不了"）。
+     * 现由 poll() 随 currentMediaItemIndex 同步，保持响应式。
+     */
+    private val _currentTrack = MutableStateFlow<Track?>(null)
+    val currentTrack: StateFlow<Track?> = _currentTrack.asStateFlow()
 
     private val _isPlaying = MutableStateFlow(false)
     val isPlaying = _isPlaying.asStateFlow()
@@ -192,6 +198,13 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
     private var controller: MediaController? = null
     private var sleepJob: Job? = null
+    /**
+     * 播放意图缓存：MediaController 异步连接（connectService 在曲目扫描之后才发起，
+     * future 还要再等一拍），连接完成前用户点归类/选曲时 controller 为 null，
+     * 旧代码直接静默 no-op（表现为"点击归类没有自动播放"）。
+     * 连接成功后由 connectService 的 listener 统一补播。
+     */
+    private var pendingPlay: (() -> Unit)? = null
 
     init {
         // 预置默认 5 段均衡器（低频→高频），保证「音效」页未播放时也能看到并手动调节，
@@ -220,6 +233,12 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             val items = _tracks.value.map { MediaItem.fromUri(it.uri) }
             controller?.setMediaItems(items)
             controller?.prepare()
+            // 补播连接前缓存的播放意图（点击归类/选曲时控制器尚未就绪）
+            val pending = pendingPlay
+            if (pending != null) {
+                pendingPlay = null
+                pending()
+            }
         }, MoreExecutors.directExecutor())
     }
 
@@ -244,6 +263,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             val idx = c.currentMediaItemIndex
             if (idx != _currentIndex.value) {
                 _currentIndex.value = idx
+                _currentTrack.value = _tracks.value.getOrNull(idx)
                 loadLyricsFor(idx)
                 updateAlbumColor(idx)
             }
@@ -475,16 +495,27 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * 选曲播放（专辑流 / 列表点击）：始终以「全部曲目」重建队列并定位到该曲，
      * 保证索引与全局曲目列表一致（从收藏 / 自定义归类切回专辑流时也能正确对齐）。
+     * controller 未就绪时缓存意图，连接后自动补播（不再静默丢失）。
      */
     fun selectTrack(i: Int) {
-        controller?.let { c ->
-            val items = _tracks.value.map { MediaItem.fromUri(it.uri) }
-            if (items.isEmpty()) return@let
-            c.setMediaItems(items)
-            c.seekToDefaultPosition(i.coerceIn(0, items.lastIndex))
-            c.play()
-            _queueIsAll.value = true
+        val items = _tracks.value.map { MediaItem.fromUri(it.uri) }
+        if (items.isEmpty()) return
+        val idx = i.coerceIn(0, items.lastIndex)
+        val c = controller
+        if (c == null) {
+            pendingPlay = {
+                controller?.let { cc ->
+                    cc.setMediaItems(items)
+                    cc.seekToDefaultPosition(idx)
+                    cc.play()
+                }
+            }
+            return
         }
+        c.setMediaItems(items)
+        c.seekToDefaultPosition(idx)
+        c.play()
+        _queueIsAll.value = true
     }
 
     fun togglePlay() {
@@ -575,22 +606,34 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
      * - 全部歌曲：全部曲目
      * - 收藏：收藏集合
      * - 自定义（无歌曲时降级为全部）
+     * @return false = 类别不存在或该归类解析不出曲目（调用方应提示且不关页）
      */
-    fun playCategory(id: String) {
-        val cat = _categories.value.find { it.id == id } ?: return
+    fun playCategory(id: String): Boolean {
+        val cat = _categories.value.find { it.id == id } ?: return false
         val items = cat.resolveTracks(_tracks.value, _favorites.value)
-        if (items.isEmpty()) return
+        if (items.isEmpty()) return false
         playItems(items)
         _queueIsAll.value = (cat.type == CategoryRepository.TYPE_ALL)
+        return true
     }
 
-    /** 用给定曲目列表重建播放队列并播放（从头） */
+    /** 用给定曲目列表重建播放队列并播放（从头）。controller 未就绪时缓存，连接后补播 */
     private fun playItems(items: List<Track>) {
-        controller?.let { c ->
-            c.setMediaItems(items.map { MediaItem.fromUri(it.uri) })
-            c.seekToDefaultPosition(0)
-            c.play()
+        if (items.isEmpty()) return
+        val c = controller
+        if (c == null) {
+            pendingPlay = {
+                controller?.let { cc ->
+                    cc.setMediaItems(items.map { MediaItem.fromUri(it.uri) })
+                    cc.seekToDefaultPosition(0)
+                    cc.play()
+                }
+            }
+            return
         }
+        c.setMediaItems(items.map { MediaItem.fromUri(it.uri) })
+        c.seekToDefaultPosition(0)
+        c.play()
     }
 
     // ---------------- 播放器外观设置 ----------------

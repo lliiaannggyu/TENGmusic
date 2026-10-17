@@ -485,13 +485,14 @@ fun WearPlayerScreen(
             }
         }
 
-        // 归类列表浮层：双击歌名（把当前歌加入类别）/ 点底部「归类」键（播放模式）唤起
+        // 归类列表浮层：双击歌名（把当前歌加入类别）/ 点底部「归类」键（播放模式）唤起。
+        // 待加入的曲目由 CategoryListScreen 内部响应式读取 vm.currentTrack（不再传快照，
+        // 避免 ViewModel 重建后 currentIndex=-1 时快照永远为 null 导致"点击没反应"）。
         if (showCategoryList) {
             CategoryListScreen(
                 vm = vm,
                 onClose = { showCategoryList = false },
                 mode = if (categoryAssignMode) CategoryListMode.ASSIGN else CategoryListMode.PLAY,
-                assignTrack = if (categoryAssignMode) vm.currentTrack else null,
             )
         }
     }
