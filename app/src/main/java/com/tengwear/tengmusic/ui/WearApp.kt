@@ -42,6 +42,7 @@ fun WearMusicApp(vm: PlayerViewModel) {
                 val pager = rememberPagerState(pageCount = { 3 })
                 var showTrackList by remember { mutableStateOf(false) }
                 var showAlbumFlow by remember { mutableStateOf(false) }
+                var showCoverTool by remember { mutableStateOf(false) }
                 // 当前可见页：横向翻页三页同在组合树，靠它决定哪一页「独占」表冠焦点
                 val currentPage = pager.currentPage
                 val scope = rememberCoroutineScope()
@@ -49,11 +50,15 @@ fun WearMusicApp(vm: PlayerViewModel) {
                 // 返回键行为（除初始播放器页外，一律「返回上一级」而非退出应用）：
                 //   1) 专辑流浮层打开  → 关闭专辑流
                 //   2) 曲目列表浮层打开 → 关闭列表
-                //   3) 非播放器页（歌词/设置）→ 回到播放器页
-                //   4) 播放器页本身    → 不拦截，保持系统默认行为
+                //   3) 封面工具打开     → 关闭封面工具
+                //   4) 非播放器页（歌词/设置）→ 回到播放器页
+                //   5) 播放器页本身    → 不拦截，保持系统默认行为
                 BackHandler(enabled = showAlbumFlow) { showAlbumFlow = false }
                 BackHandler(enabled = !showAlbumFlow && showTrackList) { showTrackList = false }
-                BackHandler(enabled = !showAlbumFlow && !showTrackList && currentPage != 0) {
+                BackHandler(enabled = !showAlbumFlow && !showTrackList && showCoverTool) {
+                    showCoverTool = false
+                }
+                BackHandler(enabled = !showAlbumFlow && !showTrackList && !showCoverTool && currentPage != 0) {
                     scope.launch { pager.animateScrollToPage(0) }
                 }
 
@@ -76,13 +81,17 @@ fun WearMusicApp(vm: PlayerViewModel) {
                         else -> AudioSettingsScreen(
                             vm = vm,
                             onOpenAlbumFlow = { showAlbumFlow = true },
-                            active = currentPage == 2 && !showAlbumFlow,
+                            onOpenCoverTool = { showCoverTool = true },
+                            active = currentPage == 2 && !showAlbumFlow && !showCoverTool,
                         )
                     }
                 }
 
                 if (showTrackList) {
                     WearTrackListOverlay(vm = vm, onClose = { showTrackList = false })
+                }
+                if (showCoverTool) {
+                    CoverToolScreen(vm = vm, onClose = { showCoverTool = false })
                 }
                 AnimatedVisibility(
                     visible = showAlbumFlow,

@@ -158,6 +158,22 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     private val _lyricColor = MutableStateFlow(0xFFFFFFFF.toInt())
     val lyricColor = _lyricColor.asStateFlow()
 
+    // ---------------- 歌词切换动画 ----------------
+
+    /** 用户选择的歌词切换动画（设置里可选，带实时预览） */
+    private val _lyricTransition = MutableStateFlow(
+        com.tengwear.tengmusic.ui.LyricTransition.fromId(
+            SettingsRepository.getLyricTransition(getApplication())
+        )
+    )
+    val lyricTransition = _lyricTransition.asStateFlow()
+
+    // ---------------- 封面工具 ----------------
+
+    /** 封面工具最近一次操作结果（写入中 / 成功 / 失败），供界面提示 */
+    private val _coverMessage = MutableStateFlow<String?>(null)
+    val coverMessage = _coverMessage.asStateFlow()
+
     private var controller: MediaController? = null
     private var sleepJob: Job? = null
 
@@ -362,6 +378,34 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // ---------------- 歌词切换动画 API ----------------
+
+    fun setLyricTransition(anim: com.tengwear.tengmusic.ui.LyricTransition) {
+        _lyricTransition.value = anim
+        SettingsRepository.setLyricTransition(getApplication(), anim.ordinal)
+    }
+
+    // ---------------- 封面工具 API ----------------
+
+    /**
+     * 给音频文件写入专辑封面（ID3v2.3 APIC 帧）。
+     * 通过 SAF 读原文件全量字节 → 重建标签 → 覆盖写回，保留标题/艺术家/专辑帧。
+     */
+    fun writeTrackCoverArt(track: Track, imageBytes: ByteArray, mime: String) {
+        _coverMessage.value = "正在写入…"
+        viewModelScope.launch(Dispatchers.IO) {
+            val (ok, msg) = Id3Tag.writeCoverArt(
+                getApplication(), track.uri, imageBytes, mime,
+                title = track.title, artist = track.artist, album = track.album,
+            )
+            _coverMessage.value = if (ok) "已写入封面：${track.title}" else "写入失败：$msg"
+        }
+    }
+
+    fun clearCoverMessage() {
+        _coverMessage.value = null
+    }
+
     private fun updateLyric(posMs: Long) {
         val list = _lyrics.value
         if (list.isEmpty()) {
@@ -492,9 +536,9 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     fun setRingRadiusFrac(frac: Float) {
         // 注意：此钳制必须与设置页滑块量程、SettingsRepository 保持一致。
         // 上限 0.50 是物理极限：圆环直径 = 屏幕短边 × frac × 2，frac=0.50 时圆环
-        // 正好顶到圆屏边缘；超过 0.50 圆环会飞出屏幕被裁掉（不可见），
-        // 因此滑块量程也止于 0.50，不再给用户"可见范围之外"的假上限。
-        _ringRadiusFrac.value = frac.coerceIn(0.30f, 0.50f)
+        // 正好顶到圆屏边缘；超过 0.50 圆环会飞出屏幕被裁掉（不可见）。
+        // 下限 0.05：圆环可缩到很小（直径 ≈ 屏幕短边 × 0.1）。
+        _ringRadiusFrac.value = frac.coerceIn(0.05f, 0.50f)
         SettingsRepository.setRingRadiusFrac(getApplication(), frac)
     }
 

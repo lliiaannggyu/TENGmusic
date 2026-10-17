@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.focusable
@@ -58,9 +59,9 @@ import kotlinx.coroutines.launch
 import kotlin.math.abs
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 
 private val CAT_BG = Color(0xF20B0B0E)
@@ -72,7 +73,7 @@ private val CAT_ACCENT = Color(0xFF34C7F4)
  * - 点击类别：开始播放该归类，并回到播放器
  * - 底部加号：用系统键盘命名新增自定义类别
  * - 长按类别（按住不动）弹出删除确认（仅自定义类别可删）
- * - 拖动类别：长按后上下拖动排序，松手生效
+ * - 拖动排序：必须长按之后才允许上下拖动（未长按的滑动一律视为滚动列表）
  * - 支持旋转表冠滚动列表
  */
 @Composable
@@ -87,9 +88,8 @@ fun CategoryListScreen(vm: PlayerViewModel, onClose: () -> Unit) {
     var name by remember { mutableStateOf("") }
     var showDeleteId by remember { mutableStateOf<String?>(null) }
     val nameFr = remember { FocusRequester() }
-    var draggingIndex by remember { mutableStateOf<Int?>(null) }
+    var draggingId by remember { mutableStateOf<String?>(null) }
     var dragOffset by remember { mutableStateOf(0f) }
-    var dragMoved by remember { mutableStateOf(false) }
     var longJob by remember { mutableStateOf<Job?>(null) }
     var rotaryAcc by remember { mutableStateOf(0f) }
 
@@ -98,7 +98,10 @@ fun CategoryListScreen(vm: PlayerViewModel, onClose: () -> Unit) {
     }
 
     Box(Modifier.fillMaxSize().background(CAT_BG)) {
-        Column(Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
             // 标题栏：返回 + 标题
             Row(
                 Modifier.fillMaxWidth().padding(10.dp),
@@ -137,11 +140,11 @@ fun CategoryListScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                 items(cats.size) { i ->
                     val cat = cats[i]
                     val count = cat.count(tracks, favorites)
-                    val isDragging = draggingIndex == i
+                    val isDragging = draggingId == cat.id
                     Card(
-                        // 点击交互全部由下方 awaitEachGesture 统一处理
-                        // （轻点播放 / 长按删除 / 上下拖动排序），避免 clickable 与
-                        // 拖拽手势互相抢事件导致"选了没反应"
+                        // 点击交互全部由下方 awaitEachGesture 统一处理：
+                        // 纯点击 = 播放；长按不动 = 删除确认；长按后才可拖动排序；
+                        // 未长按的滑动不消费、放行给列表滚动。
                         onClick = {},
                         onLongClick = {},
                         modifier = Modifier
@@ -156,57 +159,82 @@ fun CategoryListScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                             .pointerInput(cat.id) {
                                 awaitEachGesture {
                                     val down = awaitFirstDown(requireUnconsumed = false)
-                                    down.consume()
-                                    draggingIndex = i
+                                    // 不 consume down：保证未长按的滑动能正常滚动列表；
+                                    // 只有「长按后的拖动」才 consume，把列表滚动压掉。
+                                    val downY = down.position.y
+                                    var longPressFired = false
+                                    var dragMoved = false
+                                    var movedEarly = false
                                     dragOffset = 0f
-                                    dragMoved = false
                                     longJob?.cancel()
+                                    // 长按计时：按住不动 450ms 才进入「可拖动/删除」态，
+                                    // 避免"碰一下就拖"（滑一下即拖动）的误触。
                                     longJob = scope.launch {
-                                        delay(500)
-                                        if (!dragMoved && draggingIndex == i) showDeleteId = cat.id
+                                        delay(450)
+                                        if (!dragMoved && !movedEarly) {
+                                            longPressFired = true
+                                            draggingId = cat.id
+                                            showDeleteId = cat.id
+                                        }
                                     }
-                                    var lastY = down.position.y
+                                    var lastY = downY
                                     while (true) {
                                         val event = awaitPointerEvent()
                                         val change = event.changes
                                             .firstOrNull { it.id == down.id } ?: break
                                         if (change.changedToUp()) {
                                             longJob?.cancel()
-                                            // 轻点（未拖动、未触发长按删除）→ 播放该归类。
-                                            // 修复：旧实现用 detectDragGestures，其 onDragStart
-                                            // 只在手指移动超过触摸阈值后才触发，纯点击根本
-                                            // 走不到 onDragEnd 的播放分支——即"无法选择"。
-                                            if (!dragMoved && showDeleteId == null) {
-                                                vm.playCategory(cats[i].id)
-                                                onClose()
+                                            when {
+                                                // 拖动排序结束：不播放、不删除
+                                                dragMoved -> {}
+                                                // 长按已触发删除确认：松手不做额外动作
+                                                longPressFired -> {}
+                                                // 长按前就滑动：视为滚动列表意图，不播放
+                                                movedEarly -> {}
+                                                // 纯点击：播放该归类（修复"点击只弹删除"）
+                                                else -> {
+                                                    vm.playCategory(cat.id)
+                                                    onClose()
+                                                }
                                             }
-                                            draggingIndex = null
+                                            draggingId = null
                                             dragOffset = 0f
                                             dragMoved = false
                                             break
                                         }
                                         val dy = change.position.y - lastY
                                         lastY = change.position.y
-                                        if (!dragMoved && abs(dy) > 10f) {
-                                            dragMoved = true
+                                        if (longPressFired) {
+                                            // 长按已触发：先消费全部移动，阻止列表滚动抢事件
+                                            change.consume()
+                                            if (showDeleteId == cat.id) showDeleteId = null
+                                            if (!dragMoved && abs(dy) > 6f) dragMoved = true
+                                        } else if (!dragMoved &&
+                                            abs(change.position.y - downY) > 8f
+                                        ) {
+                                            // 长按前滑动：取消长按，标记为"提前滑动"，不排序
+                                            movedEarly = true
                                             longJob?.cancel()
                                         }
                                         if (dragMoved) {
-                                            change.consume()
                                             dragOffset += dy
-                                            val from = draggingIndex ?: continue
+                                            // 按 id 实时查当前下标（排序后下标已变，不能用捕获的 i）
+                                            val ids = vm.categories.value.map { it.id }
+                                            val from = ids.indexOf(cat.id)
                                             val info = listState.layoutInfo.visibleItemsInfo
-                                                .firstOrNull { it.index == i }
+                                                .firstOrNull { it.index == from }
                                             val itemH = (info?.size?.toFloat() ?: 60f)
-                                            while (abs(dragOffset) > itemH / 2f) {
+                                            while (abs(dragOffset) > itemH / 2f && from >= 0) {
                                                 val dir = if (dragOffset > 0f) 1 else -1
-                                                val to = (from + dir).coerceIn(0, cats.lastIndex)
-                                                if (to == from) { dragOffset = 0f; break }
-                                                val newIds = vm.categories.value.map { it.id }
-                                                    .toMutableList()
-                                                    .also { it.add(to, it.removeAt(from)) }
-                                                vm.reorderCategories(newIds)
-                                                draggingIndex = to
+                                                val to = (from + dir).coerceIn(0, ids.lastIndex)
+                                                if (to == from) {
+                                                    dragOffset = 0f
+                                                    break
+                                                }
+                                                vm.reorderCategories(
+                                                    ids.toMutableList()
+                                                        .also { it.add(to, it.removeAt(from)) }
+                                                )
                                                 dragOffset -= dir * itemH
                                             }
                                         }
@@ -245,7 +273,7 @@ fun CategoryListScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                                 )
                             } else {
                                 Icon(
-                                    imageVector = Icons.Filled.Category,
+                                    imageVector = Icons.Filled.LibraryMusic,
                                     contentDescription = null,
                                     tint = Color.Gray,
                                     modifier = Modifier.size(14.dp),
@@ -290,7 +318,7 @@ fun CategoryListScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                     Modifier
                         .wrapContentHeight()
                         .fillMaxWidth(0.86f)
-                        .background(Color(0xFF161B22), RoundedCornerShape(20.dp))
+                        .background(Color(0xFF161B22), CircleShape)
                         .padding(14.dp),
                 ) {
                     Text("新类别名称", fontSize = 12.sp, color = Color.White)
@@ -343,7 +371,7 @@ fun CategoryListScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                     Modifier
                         .wrapContentHeight()
                         .fillMaxWidth(0.86f)
-                        .background(Color(0xFF161B22), RoundedCornerShape(20.dp))
+                        .background(Color(0xFF161B22), CircleShape)
                         .padding(14.dp),
                 ) {
                     Text("删除该类别？", fontSize = 13.sp, color = Color.White)

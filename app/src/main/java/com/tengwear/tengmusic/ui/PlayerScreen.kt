@@ -42,7 +42,9 @@ import androidx.compose.material.icons.filled.VolumeDown
 import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.filled.Category
+import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -53,6 +55,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -231,15 +234,19 @@ fun WearPlayerScreen(
             val modeTint = if (playMode == PlayMode.SEQUENTIAL) Color(0xFF7A7A8C) else themeColor
 
             // 进度环：按屏幕短边计算直径，圆心补偿 TimeText 内缩后居中于屏幕中心，
-            // 使其真正贴近圆屏边缘（文字/按钮仍按内容盒安全圆排布，避开 TimeText）
+            // 使其真正贴近圆屏边缘（文字/按钮仍按内容盒安全圆排布，避开 TimeText）。
+            // 角度语义（Compose）：0°=3点钟，顺时针增大，270°=12点钟。
+            // startAngle=300°（1点钟）顺时针扫到 endAngle=600°（等价 240°=11点钟），
+            // 即 300°~600° 共 300° 的弧，顶部 240°~300°（11点~1点）留 60° 缺口，
+            // 避开 AppScaffold 的系统时钟 TimeText，解决「时钟遮挡进度条」问题。
             CircularProgressIndicator(
                 progress = { animatedProgress },
                 modifier = Modifier
                     .size(bigRingDiam)
                     .align(Alignment.Center)
                     .offset(y = ringCenterOffsetY),
-                startAngle = -90f,
-                endAngle = 270f,
+                startAngle = 300f,
+                endAngle = 600f,
                 colors = ProgressIndicatorDefaults.colors(
                     indicatorColor = themeColor,
                     trackColor = Color(0x22FFFFFF),
@@ -366,13 +373,29 @@ fun WearPlayerScreen(
 
             // 音量调节浮层：横向宽胶囊（M3E 风格圆角条）
             if (showVolume) {
+                // 浮层自身接管表冠焦点：浮层根节点 focusable + onRotaryScrollEvent，
+                // 打开时抢占焦点、关闭时归还播放器根节点，保证表冠全程可调音量。
+                val volFr = remember { FocusRequester() }
+                LaunchedEffect(showVolume) {
+                    if (showVolume) {
+                        try { volFr.requestFocus() } catch (_: Throwable) {}
+                    } else {
+                        try { focusRequester.requestFocus() } catch (_: Throwable) {}
+                    }
+                }
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .background(Color(0xAA000000))
-                        // 注意：关浮层不能用 clickable——它自带 focusable，会抢走表冠焦点，
-                        // 导致浮层打开后表冠调音量失灵。改用不抢焦点的 tap 检测，
-                        // 焦点始终留在播放器根节点，表冠调节全程可用。
+                        .focusRequester(volFr)
+                        .focusable()
+                        .onRotaryScrollEvent { event ->
+                            vm.setVolume(
+                                (volume + event.verticalScrollPixels * 0.0015f).coerceIn(0f, 1f)
+                            )
+                            true
+                        }
+                        // 关浮层用不抢焦点的 tap 检测（clickable 自带 focusable 会抢焦点）
                         .pointerInput(Unit) {
                             detectTapGestures(onTap = { showVolume = false })
                         },
@@ -447,13 +470,6 @@ fun WearPlayerScreen(
                                 modifier = Modifier.align(Alignment.Center),
                             )
                         }
-                        Spacer(Modifier.height(12.dp))
-                        Text(
-                            text = "拖动 / 点按胶囊调节 · 旋转表冠也可调 · 点空白处关闭",
-                            color = Color(0xFF9A9AAC),
-                            fontSize = 9.sp,
-                            textAlign = TextAlign.Center,
-                        )
                     }
                 }
             }
@@ -483,7 +499,11 @@ private fun PlayPauseButton(
             .size(boxW, size)
             .clip(shape)
             .background(background)
-            .clickable(onClick = onToggle),
+            // 用 detectTapGestures 而非 clickable：clickable 自带 focusable，
+            // 点击后会抢走播放器根节点的表冠焦点，导致表冠失灵
+            .pointerInput(Unit) {
+                detectTapGestures(onTap = { onToggle() })
+            },
         contentAlignment = Alignment.Center,
     ) {
         Icon(
@@ -617,7 +637,7 @@ private fun TriPill(
                     .background(Color(0x33FFFFFF)),
             )
             TriSection(
-                icon = Icons.Filled.Category,
+                icon = Icons.Filled.LibraryMusic,
                 tint = Color.White,
                 onClick = onCategory,
                 modifier = Modifier.weight(1f),
@@ -634,7 +654,12 @@ private fun TriSection(
     modifier: Modifier = Modifier,
 ) {
     Box(
-        modifier = modifier.fillMaxSize().clickable(onClick = onClick),
+        modifier = modifier
+            .fillMaxSize()
+            // detectTapGestures 不抢焦点：表冠焦点始终留在播放器根节点
+            .pointerInput(Unit) {
+                detectTapGestures(onTap = { onClick() })
+            },
         contentAlignment = Alignment.Center,
     ) {
         Icon(

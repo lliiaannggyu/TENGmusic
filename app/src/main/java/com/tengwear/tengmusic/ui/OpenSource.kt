@@ -50,5 +50,40 @@ object OpenSourceProjects {
             license = "Apache-2.0",
             url = "https://github.com/google/horologist",
         ),
+        OpenSourceProject(
+            name = "Equalizer314（bearinmindcat，490★，Kotlin 参数均衡器，本项目均衡器布局与调节形态的设计参考）",
+            license = "GPL-3.0",
+            url = "https://github.com/bearinmindcat/Equalizer314",
+        ),
+        OpenSourceProject(
+            name = "AndroidEqualizer（bullheadandplato，252★，Equalizer View + 频段管理，本项目均衡器频段交互的设计参考）",
+            license = "Apache-2.0",
+            url = "https://github.com/bullheadandplato/AndroidEqualizer",
+        ),
+        OpenSourceProject(
+            name = "markzhai/LyricView（268★，Apache-2.0，歌词滚动动画设计参考）",
+            license = "Apache-2.0",
+            url = "https://github.com/markzhai/LyricView",
+        ),
+        OpenSourceProject(
+            name = "wangchenyan/lrcview（716★，可拖动歌词控件，歌词切换动画设计参考）",
+            license = "Apache-2.0",
+            url = "https://github.com/wangchenyan/lrcview",
+        ),
+        OpenSourceProject(
+            name = "douzifly/android-lrc-view（164★，歌词 seek 与切换交互设计参考）",
+            license = "Apache-2.0",
+            url = "https://github.com/douzifly/android-lrc-view",
+        ),
+        OpenSourceProject(
+            name = "LyricViewDemo（asr-pub，687★，逐字高亮歌词效果设计参考）",
+            license = "Apache-2.0",
+            url = "https://github.com/asr-pub/LyricViewDemo",
+        ),
+        OpenSourceProject(
+            name = "Lyrico（Replica0110，1259★，Apache-2.0，逐字歌词设计参考）",
+            license = "Apache-2.0",
+            url = "https://github.com/Replica0110/Lyrico",
+        ),
     )
 }

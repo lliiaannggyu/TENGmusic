@@ -4,25 +4,27 @@
 
 ## 特性
 
-- **单 APK 双端**：运行时识别设备类型（`FEATURE_WATCH`），手表与手机各自呈现对应 UI
-- **iPod Cover Flow**：正方形密集卡片走廊、3D 侧转、等比缩放、镜像倒影、惯性滑动 + 居中回弹
-- **带回弹的吸附动画**：自写 `FlingBehavior`，按速度决定跨越张数，用带 overshoot 的弹簧回正，避免急停
-- 本地音乐：MediaStore 扫描、按专辑分组、Media3 播放
-- 手表端：圆形屏布局、表冠（rotary）翻页、EQ、播放速度、定时
-- 手机端：Material3 三页（播放器 / 专辑流 / 队列）
+- **纯 Wear OS 手表应用**：圆形表盘布局，内容约束在安全圆内；单 APK 亦可装到手机但按手表 UI 呈现
+- **M3E（Material 3 Expressive）UI**：全部使用 Wear Compose Material3 官方组件（ScalingLazyColumn / Card / SwitchButton / RadioButton / Slider / CompactButton），无自绘控件
+- **iPod Cover Flow**：正方形密集卡片走廊、3D 侧转、等比缩放、镜像倒影、惯性滑动 + 居中回弹；表冠每咔哒一格
+- **表冠（rotary）全链路支持**：播放页音量、歌词滚动、专辑流翻页、列表滚动、EQ 频段微调
+- **歌词系统**：LRC 解析、点击跳播、8 种切换动画可选（设置内带实时预览）
+- **均衡器**：系统 Equalizer + 频率响应曲线 + 预设 + 每频段手动增益 + 表冠微调
+- **归类（智能列表）**：全部歌曲 / 收藏 / 自定义类别，点击播放、长按删除、长按后拖动排序
+- **封面工具**：给 MP3 写入专辑封面（ID3v2.3 APIC 帧，照片选择器选图）
+- **播放器外观自定义**：进度环半径（5%~50%）/ 粗细、背景模糊 / 明度、歌词颜色（跟随封面或 M3E 官方色阶）
 - `minSdk 25`，Kotlin + Jetpack Compose
 
 ## 技术栈
 
 | 组件 | 版本 |
 |---|---|
-| Kotlin | 1.9.24 |
-| Compose UI / Foundation | 1.6.7 |
-| Wear Compose | 1.3.1 |
-| Material3 | 1.2.1 |
-| Media3 | — |
-| Coil | — |
-| minSdk / targetSdk | 25 / 34 |
+| Kotlin | 2.x（Compose Compiler 插件） |
+| Compose BOM | 2026.06.01（Compose 1.11.4 / material3 1.4.0） |
+| Wear Compose（material3 / foundation） | 1.6.2 |
+| Media3 | 1.3.1 |
+| Coil | 2.6.0 |
+| minSdk / targetSdk / compileSdk | 25 / 36 / 36 |
 
 ## 构建
 

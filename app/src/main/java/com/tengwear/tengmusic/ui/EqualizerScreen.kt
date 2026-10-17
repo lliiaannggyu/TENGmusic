@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.shape.CircleShape
@@ -64,44 +65,51 @@ import com.tengwear.tengmusic.PlayerViewModel
 import kotlin.math.abs
 import kotlin.math.ln
 
-private val ACCENT = Color(0xFF34C7F4)
-
 /** 播放速度档位（RadioButton 单选列表与循环切换共用） */
 private val SPEED_STEPS = floatArrayOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
 
-/** 歌词自定义配色预设（0xAARRGGBB）：白 / 青 / 黄 / 绿 / 粉 / 橙 / 紫 */
+/**
+ * 歌词自定义配色预设（0xAARRGGBB）—— Material 3 Expressive 官方基线色阶
+ * （baseline scheme：primary / secondary / tertiary / error 的 tone 40/70/80 阶 + 纯白），
+ * 全部取自 M3 官方基线调色板，保证与 M3E 组件库视觉一致。
+ */
 private val LYRIC_PALETTE = listOf(
-    0xFFFFFFFF.toInt(),
-    0xFF34C7F4.toInt(),
-    0xFFFFD23F.toInt(),
-    0xFF4BE08A.toInt(),
-    0xFFFF6BA6.toInt(),
-    0xFFFF9F43.toInt(),
-    0xFFB07CFF.toInt(),
+    0xFFFFFFFF.toInt(), // 纯白
+    0xFFD0BCFF.toInt(), // M3 Primary tone 80
+    0xFFB69DF8.toInt(), // M3 Primary tone 70
+    0xFFEFB8C8.toInt(), // M3 Tertiary tone 80
+    0xFFF2B8B5.toInt(), // M3 Error tone 80
+    0xFFCCC2DC.toInt(), // M3 Secondary tone 80
+    0xFF6750A4.toInt(), // M3 Primary tone 40
+    0xFF7D5260.toInt(), // M3 Tertiary tone 40
 )
 
 /**
  * 手表「音效与播放设置」页（Wear M3E 列表：ScalingLazyColumn + ListHeader +
- * RadioButton / SwitchButton / Slider 标准列表项）：
+ * RadioButton / SwitchButton / Slider / Card 标准列表项）：
  * - 播放：播放模式、随机播放、播放速度（RadioButton / SwitchButton）
- * - 音效：均衡器开关、预设、各频段增益手动调节（手指 −/+ 每格 3dB，旋转表冠进入「微调」每格 1dB）
+ * - 音效：均衡器开关、频率响应曲线、预设单选、各频段增益 Slider 手动调节
  * - 睡眠定时
  * - 播放器外观：进度环半径 / 粗细、背景模糊 / 明度、歌词颜色（跟随封面或自定义色板）
+ * - 歌词切换动画：多种切换动画可选，带实时预览
+ * - 工具：封面工具（给音频文件写入专辑封面）
  * - 关于：UI 版本信息、开源许可
  * - 支持旋转表冠滚动列表
  *
  * 排序原则：按使用频率从高到低——播放操作最常用置顶，音效次之，外观与关于收底。
  *
  * 频段默认预置 5 段（见 PlayerViewModel.init），因此未播放时也能直接看到并手动调节，
- * 不再只剩一个开关。点某个频段即可选中，随后「旋转表冠」以 1dB 步进微调该频段，点提示条退出微调。
+ * 不再只剩一个开关。点某个频段即可选中，随后旋转表冠以 1dB 步进微调该频段。
  *
  * @param onOpenAlbumFlow 预留入口（专辑流由播放页上滑唤起）
- * @param active         仅当前可见页时抢占表冠焦点（横向翻页三页同在组合树，必须互斥）
+ * @param onOpenCoverTool 打开封面工具（给音频文件写入专辑封面）
+ * @param active          仅当前可见页时抢占表冠焦点（横向翻页三页同在组合树，必须互斥）
  */
 @Composable
 fun AudioSettingsScreen(
     vm: PlayerViewModel,
     onOpenAlbumFlow: () -> Unit = {},
+    onOpenCoverTool: () -> Unit = {},
     active: Boolean = true,
 ) {
     val eqEnabled by vm.eqEnabled.collectAsState()
@@ -118,6 +126,10 @@ fun AudioSettingsScreen(
     val lyricCustomColor by vm.lyricCustomColor.collectAsState()
     val ringRadiusFrac by vm.ringRadiusFrac.collectAsState()
     val ringStroke by vm.ringStroke.collectAsState()
+    // 设置页强调色跟随歌词主题色（专辑主色或用户自定义色）
+    val lyricColor by vm.lyricColor.collectAsState()
+    val lyricTransition by vm.lyricTransition.collectAsState()
+    val accent = Color(lyricColor)
 
     val listState = rememberScalingLazyListState()
     val listFr = rememberRotaryFocusRequester(active)
@@ -204,7 +216,7 @@ fun AudioSettingsScreen(
                     }
                 }
 
-                // ========== 2. 音效 ==========
+                // ========== 2. 音效（均衡器）==========
                 item { ListHeader { Text("音效") } }
 
                 // EQ 开关（M3E SwitchButton）
@@ -235,6 +247,7 @@ fun AudioSettingsScreen(
                         EqCurve(
                             freqs = eqFreqs,
                             gains = eqGains,
+                            accent = accent,
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }
@@ -249,7 +262,7 @@ fun AudioSettingsScreen(
                             Text(
                                 if (eqExpanded) "频段调节 ▲" else "频段调节 ▼",
                                 fontSize = 11.sp,
-                                color = ACCENT
+                                color = accent
                             )
                             Text(eqPreset, fontSize = 9.sp)
                         }
@@ -269,39 +282,54 @@ fun AudioSettingsScreen(
                             )
                         }
 
-                        // 频段增益（手动调节）
+                        // 重置为平直（M3E CompactButton）
                         item {
-                            Text(
-                                "频段增益 — 点频段后转表冠微调",
-                                fontSize = 11.sp,
-                                color = Color.Gray
-                            )
+                            CompactButton(
+                                onClick = { vm.applyPreset(EqPresets.ALL.first()) },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text("重置为平直", fontSize = 11.sp)
+                            }
                         }
+
+                        // 频段增益（手动调节）：每个频段一个 M3E Card 行
+                        item { ListHeader { Text("频段") } }
                         items(eqFreqs.size) { i ->
                             val g = eqGains.getOrElse(i) { 0 }
                             val sel = selectedBand == i
-                            // 频段增益改用 M3E Slider（组件库），点频段后仍可用表冠微调
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable { selectedBand = if (sel) null else i }
-                                    .padding(horizontal = 6.dp, vertical = 2.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally,
+                            Card(
+                                onClick = { selectedBand = if (sel) null else i },
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = if (sel) {
+                                        accent.copy(alpha = 0.22f)
+                                    } else {
+                                        Color(0xF20B0B0E)
+                                    },
+                                ),
                             ) {
-                                Text(
-                                    "${formatFreq(eqFreqs[i])}   ${"%.1f".format(g / 100f)} dB",
-                                    fontSize = 10.sp,
-                                    color = if (sel) ACCENT else Color.Gray
-                                )
-                                Slider(
-                                    value = (g / 100f).coerceIn(-15f, 15f),
-                                    onValueChange = { vm.setBandGain(i, (it * 100f).toInt()) },
-                                    // steps 必须 > 0：M3E Slider 的 ±按钮步长 = 量程/(steps+1)，
-                                    // steps=0 时步长=整个量程，点一下直接跳到最小/最大
-                                    steps = 300,
-                                    valueRange = -15f..15f,
-                                    modifier = Modifier.fillMaxWidth(),
-                                )
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 10.dp, vertical = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        "${formatFreq(eqFreqs[i])}   ${"%.1f".format(g / 100f)} dB",
+                                        fontSize = 10.sp,
+                                        color = if (sel) accent else Color.Gray,
+                                        modifier = Modifier.width(72.dp),
+                                    )
+                                    Slider(
+                                        value = (g / 100f).coerceIn(-15f, 15f),
+                                        onValueChange = { vm.setBandGain(i, (it * 100f).toInt()) },
+                                        // steps 必须 > 0：M3E Slider 的 ±按钮步长 = 量程/(steps+1)，
+                                        // steps=0 时步长=整个量程，点一下直接跳到最小/最大
+                                        steps = 300,
+                                        valueRange = -15f..15f,
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
+                                }
                             }
                         }
                     }
@@ -318,7 +346,7 @@ fun AudioSettingsScreen(
                         Text(
                             if (mins <= 0) "关闭" else "$mins 分钟",
                             fontSize = 12.sp,
-                            color = ACCENT,
+                            color = accent,
                             textAlign = TextAlign.Center
                         )
                         Slider(
@@ -333,23 +361,24 @@ fun AudioSettingsScreen(
 
                 // ========== 4. 播放器外观（进度环 / 背景 / 歌词颜色）==========
                 item { ListHeader { Text("播放器外观") } }
-                // 进度环半径（占屏幕短边比例）
+                // 进度环半径（占屏幕短边比例，可缩至很小）
                 item {
                     Column(
                         Modifier.fillMaxWidth().padding(horizontal = 12.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
-                        Text("进度环半径 ${(ringRadiusFrac * 100).toInt()}%", fontSize = 11.sp, color = ACCENT)
+                        Text("进度环半径 ${(ringRadiusFrac * 100).toInt()}%", fontSize = 11.sp, color = accent)
                         Slider(
-                            value = ringRadiusFrac.coerceIn(0.30f, 0.50f),
+                            value = ringRadiusFrac.coerceIn(0.05f, 0.50f),
                             onValueChange = { vm.setRingRadiusFrac(it) },
-                            steps = 20,
-                            valueRange = 0.30f..0.50f,
+                            steps = 45,
+                            valueRange = 0.05f..0.50f,
                             modifier = Modifier.fillMaxWidth(),
                         )
-                        // 说明物理上限，避免用户误以为还能更大
+                        // 说明上下限：50% 时圆环直径 = 屏幕短边（顶到圆屏边缘，为物理上限）；
+                        // 下限可缩到很小，满足「尽可能小」的需求
                         Text(
-                            "50% 时圆环直径 = 屏幕短边（顶到圆屏边缘，为物理上限）",
+                            "50% 为物理上限（圆环顶到屏幕边缘），最小可缩至 5%",
                             fontSize = 8.sp,
                             color = Color.Gray,
                             textAlign = TextAlign.Center,
@@ -362,7 +391,7 @@ fun AudioSettingsScreen(
                         Modifier.fillMaxWidth().padding(horizontal = 12.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
-                        Text("进度环粗细 ${ringStroke.toInt()}dp", fontSize = 11.sp, color = ACCENT)
+                        Text("进度环粗细 ${ringStroke.toInt()}dp", fontSize = 11.sp, color = accent)
                         Slider(
                             value = ringStroke,
                             onValueChange = { vm.setRingStroke(it) },
@@ -375,10 +404,10 @@ fun AudioSettingsScreen(
                 // 播放器背景（专辑封面作背景）：模糊强度 + 明度（暗化）可调
                 item {
                     Column(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                        Modifier.fillMaxWidth().padding(horizontal = 12.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Text("背景模糊 ${blurRadius.toInt()}dp", fontSize = 11.sp, color = ACCENT)
+                        Text("背景模糊 ${blurRadius.toInt()}dp", fontSize = 11.sp, color = accent)
                         Slider(
                             value = blurRadius,
                             onValueChange = { vm.setBlurRadius(it) },
@@ -390,11 +419,11 @@ fun AudioSettingsScreen(
                 }
                 item {
                     Column(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                        Modifier.fillMaxWidth().padding(horizontal = 12.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         val brightness = (100f - dimAlpha / 0.95f * 100f).coerceIn(0f, 100f)
-                        Text("背景明度 ${brightness.toInt()}", fontSize = 11.sp, color = ACCENT)
+                        Text("背景明度 ${brightness.toInt()}", fontSize = 11.sp, color = accent)
                         Slider(
                             value = brightness,
                             onValueChange = { vm.setBackgroundBrightness(it) },
@@ -414,7 +443,7 @@ fun AudioSettingsScreen(
                         modifier = Modifier.fillMaxWidth(),
                         label = { Text("跟随专辑封面", fontSize = 11.sp) },
                         secondaryLabel = {
-                            Text(if (lyricColorMode == 0) "当前使用" else "点按使用", fontSize = 9.sp)
+                            Text(if (lyricColorMode == 0) "当前使用" else "未使用", fontSize = 9.sp)
                         },
                     )
                 }
@@ -454,7 +483,42 @@ fun AudioSettingsScreen(
                     }
                 }
 
-                // ========== 5. 关于 ==========
+                // ========== 歌词切换动画（多动画可选 + 实时预览）==========
+                item { ListHeader { Text("歌词切换动画") } }
+                items(LyricTransition.entries.size) { i ->
+                    val anim = LyricTransition.entries[i]
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { vm.setLyricTransition(anim) },
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        RadioButton(
+                            selected = lyricTransition == anim,
+                            onSelect = { vm.setLyricTransition(anim) },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text(anim.label, fontSize = 11.sp) },
+                            secondaryLabel = { Text(anim.desc, fontSize = 9.sp) },
+                        )
+                        // 实时预览：迷你歌词行循环演示该动画的切换效果
+                        LyricTransitionPreview(anim, accent)
+                    }
+                }
+
+                // ========== 6. 工具 ==========
+                item { ListHeader { Text("工具") } }
+                item {
+                    Card(
+                        onClick = onOpenCoverTool,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(contentColor = accent),
+                    ) {
+                        Text("封面工具", fontSize = 11.sp)
+                        Text("给音频文件写入专辑封面", fontSize = 9.sp)
+                    }
+                }
+
+                // ========== 7. 关于 ==========
                 item { ListHeader { Text("关于") } }
 
                 // 播放器主题：仅保留 M3E 一套 UI（经典主题已移除），无需再切换
@@ -462,7 +526,7 @@ fun AudioSettingsScreen(
                     Card(
                         onClick = { },
                         modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(contentColor = ACCENT),
+                        colors = CardDefaults.cardColors(contentColor = accent),
                     ) {
                         Text("播放器 UI", fontSize = 11.sp)
                         Text("M3E（Material 3 Expressive）", fontSize = 9.sp)
@@ -474,7 +538,7 @@ fun AudioSettingsScreen(
                     Card(
                         onClick = { showLicenses = !showLicenses },
                         modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(contentColor = ACCENT),
+                        colors = CardDefaults.cardColors(contentColor = accent),
                     ) {
                         Text(if (showLicenses) "用到的开源项目 ▲" else "用到的开源项目 ▼", fontSize = 11.sp)
                         Text("共 ${OpenSourceProjects.ALL.size} 项", fontSize = 9.sp)
@@ -489,7 +553,7 @@ fun AudioSettingsScreen(
                             colors = CardDefaults.cardColors(),
                         ) {
                             Text(p.name, fontSize = 9.sp, maxLines = 2)
-                            Text(p.license, fontSize = 8.sp, color = ACCENT)
+                            Text(p.license, fontSize = 8.sp, color = accent)
                             Text(p.url, fontSize = 7.sp, color = Color.Gray, maxLines = 1)
                         }
                     }
@@ -506,7 +570,7 @@ fun AudioSettingsScreen(
                 }
             }
 
-            // 微调模式覆盖提示条：选中频段后，表冠直接调增益，点此退出
+            // 微调模式覆盖提示条：选中频段后，表冠直接调增益
             if (active && selectedBand != null) {
                 val bandName = eqFreqs.getOrNull(selectedBand!!)?.let { formatFreq(it) } ?: ""
                 Box(
@@ -528,8 +592,8 @@ fun AudioSettingsScreen(
                         .clickable { selectedBand = null }
                 ) {
                     Text(
-                        "🎚 表冠微调 $bandName · 点此退出",
-                        color = ACCENT,
+                        "🎚 $bandName",
+                        color = accent,
                         fontSize = 10.sp,
                         textAlign = TextAlign.Center,
                         modifier = Modifier.align(Alignment.Center)
@@ -545,7 +609,12 @@ fun AudioSettingsScreen(
  * 把每个频段的增益连成折线并在数据点画圆点，直观反映当前均衡器形状；增益变化时实时重绘。
  */
 @Composable
-private fun EqCurve(freqs: List<Int>, gains: List<Int>, modifier: Modifier = Modifier) {
+private fun EqCurve(
+    freqs: List<Int>,
+    gains: List<Int>,
+    accent: Color,
+    modifier: Modifier = Modifier,
+) {
     val gMin = -15f
     val gMax = 15f
     val fMin = 20f
@@ -579,13 +648,13 @@ private fun EqCurve(freqs: List<Int>, gains: List<Int>, modifier: Modifier = Mod
         }
         drawPath(
             path = path,
-            color = ACCENT,
+            color = accent,
             style = Stroke(width = 2.dp.toPx()),
         )
         // 数据点
         freqs.forEachIndexed { i, f ->
             drawCircle(
-                color = ACCENT,
+                color = accent,
                 radius = 3.dp.toPx(),
                 center = Offset(xOf(f), yOf(dbOf(gains.getOrElse(i) { 0 }))),
             )

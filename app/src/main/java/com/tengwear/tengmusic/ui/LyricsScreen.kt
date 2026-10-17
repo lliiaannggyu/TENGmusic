@@ -56,8 +56,11 @@ fun LyricsScreen(
 ) {
     val lyrics by vm.lyrics.collectAsState()
     val idx by vm.lyricIndex.collectAsState()
+    val position by vm.position.collectAsState()
     // 歌词着色：跟随专辑主色或用户自定义色（默认白，专辑无封面时）
     val lyricColor by vm.lyricColor.collectAsState()
+    // 歌词切换动画（设置里可选，带实时预览）
+    val anim by vm.lyricTransition.collectAsState()
     // 初始化即把当前句作为中心项，避免首次进入先停在顶部再「跳」到中间的闪动
     val listState = rememberScalingLazyListState(initialCenterItemIndex = idx.coerceAtLeast(0))
     val focusRequester = rememberRotaryFocusRequester(active)
@@ -114,60 +117,23 @@ fun LyricsScreen(
                 // animateScrollToItem(idx) 才能把当前行精确滚到圆形屏正中（之前多出的 spacer
                 // 让下标错开一位，导致整页歌词都偏下）。
                 items(lyrics.size) { i ->
+                    val line = lyrics[i]
+                    val next = lyrics.getOrNull(i + 1)
+                    // 句内播放进度（供逐字填充 / 逐字显示动画使用）
+                    val lineDur = ((next?.timeMs ?: (line.timeMs + 4000L)) - line.timeMs)
+                        .coerceAtLeast(1L)
+                    val lineProgress =
+                        ((position - line.timeMs).toFloat() / lineDur).coerceIn(0f, 1f)
                     LyricLine(
-                        text = lyrics[i].text,
+                        text = line.text,
                         active = i == idx,
                         activeColor = Color(lyricColor),
-                        onClick = { vm.seekToLyric(lyrics[i].timeMs) },
+                        anim = anim,
+                        lineProgress = if (i == idx) lineProgress else 0f,
+                        onClick = { vm.seekToLyric(line.timeMs) },
                     )
                 }
             }
         }
     }
-}
-
-/** 单行歌词：仅用 graphicsLayer 做缩放/透明（不触发列表重测重排，杜绝逐句卡顿），
- * 满宽 + 居中保证水平居中；点击跳播。
- * @param activeColor 当前句（高亮）歌词颜色：跟随专辑主色或用户自定义
- */
-@Composable
-private fun LyricLine(
-    text: String,
-    active: Boolean,
-    activeColor: Color,
-    onClick: () -> Unit,
-) {
-    // 固定字号：逐句「放大」改用 graphicsLayer.scale（纯变换、不改布局），
-    // 否则 animateIntrinsic 字号会令行高变化→列表重测→当前行位置漂移=肉眼卡顿。
-    val scale by animateFloatAsState(
-        targetValue = if (active) 1.12f else 0.92f,
-        animationSpec = tween(durationMillis = 160),
-        label = "lyricScale"
-    )
-    val alpha by animateFloatAsState(
-        targetValue = if (active) 1f else 0.45f,
-        animationSpec = tween(durationMillis = 160),
-        label = "lyricAlpha"
-    )
-    val color by animateColorAsState(
-        targetValue = if (active) activeColor else Color.Gray,
-        animationSpec = tween(durationMillis = 160),
-        label = "lyricColor"
-    )
-
-    Text(
-        text = text,
-        textAlign = TextAlign.Center,
-        fontSize = 15.sp,
-        color = color,
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(vertical = 6.dp, horizontal = 12.dp)
-            .graphicsLayer {
-                scaleX = scale
-                scaleY = scale
-                this.alpha = alpha
-            }
-    )
 }
