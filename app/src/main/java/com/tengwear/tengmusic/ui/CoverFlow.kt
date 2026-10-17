@@ -1,13 +1,23 @@
 package com.tengwear.tengmusic.ui
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -24,7 +34,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.input.pointer.pointerInput
@@ -77,7 +89,6 @@ fun AlbumCoverFlow(
 ) {
     val tracks by vm.tracks.collectAsState()
     val index by vm.currentIndex.collectAsState()
-    val queueIsAll by vm.queueIsAll.collectAsState()
 
     // 实时、可靠地算出「最靠近屏幕中心的歌曲」索引（替代库内部滞后的 selectedIndex）。
     // 列表首尾各有一个占位 spacer，所以 列表下标 - 1 = 歌曲下标。
@@ -130,14 +141,16 @@ fun AlbumCoverFlow(
         }
     }
 
-        // 进入专辑流时，把封面滚动到「当前正在播放」的歌曲（而非默认停在第一张）
-    LaunchedEffect(active) {
-        if (!active) return@LaunchedEffect
+    // 进入专辑流时，把封面滚动到「当前正在播放」的歌曲（而非默认停在第一张）。
+    // index 是全局曲目下标（ViewModel 的 poll 已做队列映射，播过归类也不会错位）；
+    // tracks.size 一并入键：打开专辑流时曲库若还在扫描，扫描完成后再补一次定位。
+    LaunchedEffect(active, tracks.size) {
+        if (!active || tracks.isEmpty()) return@LaunchedEffect
         // 等 Cover Flow 完成首次布局、几何参数就绪（否则 scrollToItem 算不出位移）
         var tries = 0
-        while (state?.geometry == null && tries < 50) { delay(16); tries++ }
-        val start = if (queueIsAll) index else 0
-        if (start in 0..tracks.lastIndex) state?.scrollToItem(start)
+        while (state?.geometry == null && tries < 100) { delay(16); tries++ }
+        val start = if (index in 0..tracks.lastIndex) index else 0
+        state?.scrollToItem(start)
     }
 
     Box(
@@ -211,6 +224,8 @@ fun AlbumCoverFlow(
         // 底部居中：当前歌曲名 / 歌手 / 专辑
         val currentTrack = tracks.getOrNull(centeredIndex.value)
         val nameShadow = Shadow(color = Color.Black, offset = Offset(0f, 2f), blurRadius = 4f)
+        // 居中的封面正好是播放器当前曲目 → 标题旁挂「正在播放」声波标识
+        val isNowPlaying = index in 0..tracks.lastIndex && centeredIndex.value == index
 
         Column(
             modifier = Modifier
@@ -218,14 +233,20 @@ fun AlbumCoverFlow(
                 .padding(bottom = 14.dp, start = 10.dp, end = 10.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text(
-                text = currentTrack?.title ?: "",
-                fontSize = 14.sp,
-                maxLines = 1,
-                textAlign = TextAlign.Center,
-                color = Color.White,
-                style = TextStyle(shadow = nameShadow),
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = currentTrack?.title ?: "",
+                    fontSize = 14.sp,
+                    maxLines = 1,
+                    textAlign = TextAlign.Center,
+                    color = Color.White,
+                    style = TextStyle(shadow = nameShadow),
+                )
+                if (isNowPlaying) {
+                    Spacer(Modifier.width(5.dp))
+                    PlayingWave(color = Color(0xFF8FD8FF))
+                }
+            }
             Text(
                 text = currentTrack?.artist ?: "",
                 fontSize = 10.sp,
@@ -313,5 +334,47 @@ private fun TrackArtContent(track: Track) {
             modifier = Modifier.fillMaxSize(),
             contentScale = ContentScale.Crop,
         )
+    }
+}
+
+/**
+ * 「正在播放」声波标识：三根圆头声波柱，高度此消彼长地无限起伏。
+ * 挂在专辑流底部信息行的标题旁，标记居中的封面正是播放器当前曲目。
+ * 纯 Canvas 绘制，不依赖扩展图标库。
+ */
+@Composable
+private fun PlayingWave(
+    modifier: Modifier = Modifier,
+    color: Color = Color.White,
+) {
+    val transition = rememberInfiniteTransition(label = "playing-wave")
+    val h1 by transition.animateFloat(
+        0.30f, 1.00f,
+        animationSpec = infiniteRepeatable(tween(380, easing = LinearEasing), RepeatMode.Reverse),
+        label = "wave-bar-1",
+    )
+    val h2 by transition.animateFloat(
+        1.00f, 0.35f,
+        animationSpec = infiniteRepeatable(tween(460, easing = LinearEasing), RepeatMode.Reverse),
+        label = "wave-bar-2",
+    )
+    val h3 by transition.animateFloat(
+        0.45f, 0.95f,
+        animationSpec = infiniteRepeatable(tween(340, easing = LinearEasing), RepeatMode.Reverse),
+        label = "wave-bar-3",
+    )
+    Canvas(modifier = modifier.size(width = 15.dp, height = 11.dp)) {
+        val barW = size.width * 0.20f
+        val gap = (size.width - barW * 3f) / 2f
+        val radius = CornerRadius(barW / 2f)
+        listOf(h1, h2, h3).forEachIndexed { i, p ->
+            val h = (size.height * p).coerceAtLeast(barW)
+            drawRoundRect(
+                color = color,
+                topLeft = Offset(i * (barW + gap), (size.height - h) / 2f),
+                size = Size(barW, h),
+                cornerRadius = radius,
+            )
+        }
     }
 }

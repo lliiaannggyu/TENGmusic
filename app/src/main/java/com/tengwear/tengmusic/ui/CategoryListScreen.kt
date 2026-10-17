@@ -193,11 +193,11 @@ fun CategoryListScreen(
                         (cat.id == CategoryRepository.ID_FAV && favorites.contains(ct.id) ||
                             (!cat.isBuiltIn && cat.trackIds.contains(ct.id)))
                     Card(
-                        // 归类模式用 Card 原生 onClick：纯点击即加入/移出，不挂自定义手势，
-                        // 杜绝外层 pointerInput 与卡片内部 clickable 抢事件导致"点击没反应"。
-                        // 播放模式的点击/长按/拖动由下方 pointerInput 三态手势统一处理：
-                        // 纯点击 = 播放；长按不动 = 删除确认（松手才弹）；长按后才可拖动排序；
-                        // 未长按的滑动不消费、放行给列表滚动。
+                        // 两种模式的纯点击都走 Card 原生 onClick：与 ScalingLazyColumn 滚动
+                        // 共存是框架标准路径，远比手写 awaitEachGesture 的 tap 判定可靠——
+                        // 旧实现在卡片上手指移动超 8px 即判"滚动意图"放弃点击且无任何反馈，
+                        // 手表上点 62px 高的小卡片极易误触（表现为"点了没播放，停在这页"）。
+                        // pointerInput 只保留播放模式「长按之后」的拖动排序与松手删除。
                         onClick = if (mode == CategoryListMode.ASSIGN) {
                             {
                                 val track = currentTrack
@@ -236,7 +236,14 @@ fun CategoryListScreen(
                                 }
                             }
                         } else {
-                            {}
+                            {
+                                // 播放模式：点击类别 = 播放该归类
+                                val ok = vm.playCategory(cat.id)
+                                if (ok) onClose()
+                                else assignMsg =
+                                    if (vm.tracks.value.isEmpty()) "曲库扫描中，请稍候"
+                                    else "该归类暂无歌曲"
+                            }
                         },
                         onLongClick = {},
                         modifier = Modifier
@@ -256,9 +263,10 @@ fun CategoryListScreen(
                                 }
                             )
                             .pointerInput(cat.id, mode) {
-                                // 仅播放模式挂三态手势（纯点击=播放 / 长按=删除 / 拖动=排序）。
-                                // 归类模式不挂自定义手势：点击由 Card 原生 onClick 处理（见上方），
-                                // 避免外层 pointerInput 与卡片内部 clickable 抢事件导致"点击没反应"。
+                                // 仅播放模式挂手势，且只处理「长按之后」的拖动排序与松手删除：
+                                // 纯点击已由 Card 原生 onClick 播放（见上方），不在此判定——
+                                // 手写 tap 的 8px 位移阈值在手表小卡片上误触率极高。
+                                // 长按前的手指滑动不消费，放行给列表滚动。
                                 if (mode == CategoryListMode.PLAY) {
                                     awaitEachGesture {
                                         val down = awaitFirstDown(requireUnconsumed = false)
@@ -306,14 +314,9 @@ fun CategoryListScreen(
                                                     longPressFired -> {
                                                         showDeleteId = cat.id
                                                     }
-                                                    // 长按前就滑动：视为滚动列表意图，不播放
-                                                    movedEarly -> {}
-                                                    // 纯点击：播放该归类；
-                                                    // 空归类/未找到则停留并提示，不关页（不再静默退出）
-                                                    else -> {
-                                                        val ok = vm.playCategory(cat.id)
-                                                        if (ok) onClose() else assignMsg = "该归类暂无歌曲"
-                                                    }
+                                                    // 纯点击（已由 Card onClick 播放）/ 长按前滑动
+                                                    // （滚动意图，放行列表）：此处不再动作
+                                                    else -> {}
                                                 }
                                                 draggingId = null
                                                 dragOffset = 0f

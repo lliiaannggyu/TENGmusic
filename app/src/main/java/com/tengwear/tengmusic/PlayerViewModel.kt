@@ -126,6 +126,15 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     private val _queueIsAll = MutableStateFlow(true)
     val queueIsAll = _queueIsAll.asStateFlow()
 
+    /**
+     * 当前播放队列的曲目 id 序列（null = 全部曲目顺序）。
+     * 播放归类时队列是类别子集，controller 的 currentMediaItemIndex 是**队列内下标**，
+     * 而 _currentIndex 的语义是**全局曲目下标**（标题/歌词/专辑色/专辑流定位都依赖它）。
+     * 旧代码直接把队列内下标当全局下标用，播完归类后标题显示错歌、currentTrack 错乱，
+     * 「添加到归类」加错歌/加不上正是由此引发。poll 时经此映射回全局下标。
+     */
+    private var activeQueueIds: List<Long>? = null
+
     // ---------------- 播放器外观设置（主题 / 进度环） ----------------
 
     /** 播放器 UI 主题：0 = 经典（白色半透明胶囊），1 = M3E（底部三瓣长胶囊） */
@@ -260,7 +269,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                 else -> PlayMode.SEQUENTIAL
             }
             _speed.value = c.playbackParameters.speed
-            val idx = c.currentMediaItemIndex
+            val idx = resolveGlobalIndex(c.currentMediaItemIndex)
             if (idx != _currentIndex.value) {
                 _currentIndex.value = idx
                 _currentTrack.value = _tracks.value.getOrNull(idx)
@@ -292,6 +301,17 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             }
             AudioEffects.setEnabled(_eqEnabled.value)
         }
+    }
+
+    /**
+     * 把 controller 的队列内下标映射为全局曲目下标。
+     * activeQueueIds 为 null（全部曲目队列）时两者一致；
+     * 播放归类时经 id 反查全局下标，查不到则原样返回（容错）。
+     */
+    private fun resolveGlobalIndex(queueIdx: Int): Int {
+        val ids = activeQueueIds ?: return queueIdx
+        val id = ids.getOrNull(queueIdx) ?: return queueIdx
+        return _tracks.value.indexOfFirst { it.id == id }.takeIf { it >= 0 } ?: queueIdx
     }
 
     private fun loadLyricsFor(idx: Int) {
@@ -516,6 +536,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         c.seekToDefaultPosition(idx)
         c.play()
         _queueIsAll.value = true
+        activeQueueIds = null // 全部曲目队列：队列下标即全局下标
     }
 
     fun togglePlay() {
@@ -620,6 +641,8 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     /** 用给定曲目列表重建播放队列并播放（从头）。controller 未就绪时缓存，连接后补播 */
     private fun playItems(items: List<Track>) {
         if (items.isEmpty()) return
+        // 记录队列 id 序列：poll 据此把队列内下标映射回全局下标（见 resolveGlobalIndex）
+        activeQueueIds = items.map { it.id }
         val c = controller
         if (c == null) {
             pendingPlay = {
