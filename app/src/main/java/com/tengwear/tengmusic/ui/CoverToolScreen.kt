@@ -3,9 +3,6 @@ package com.tengwear.tengmusic.ui
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.provider.OpenableColumns
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -67,12 +64,12 @@ private class CoverPair(val track: Track, val image: PickedImage, val score: Int
  * 封面工具：给音频文件（MP3）写入专辑封面。
  *
  * 两种模式（界面全部使用 M3E 官方组件）：
- * 1. **单曲写入**：点选一首歌 → 系统照片选择器选图 → 居中裁方 + 压缩为 512px JPEG →
- *    通过 SAF 覆盖写回文件（ID3v2.3 APIC 帧，见 Id3Tag）。**已带封面的歌曲点击即为替换封面**，
- *    卡片右侧徽标显示「替换 / 添加」，写入成功后即时翻转。
+ * 1. **单曲写入**：点选一首歌 → 内置文件管理器（SAF 目录授权 + 应用内浏览）勾选一张图 →
+ *    居中裁方 + 压缩为 512px JPEG → 通过 SAF 覆盖写回文件（ID3v2.3 APIC 帧，见 Id3Tag）。
+ *    **已带封面的歌曲点击即为替换封面**，卡片右侧徽标显示「替换 / 添加」，写入成功后即时翻转。
  * 2. **批量匹配**（参考 GitHub 高星音乐标签编辑器 Lyrico 1259★ 的批量标签处理形态）：
- *    多选图片 → 按「歌名/文件名 与 图片文件名 最长公共子串 ≥ 3 字符」自动判定对应封面 →
- *    **先把匹配结果列出来给用户看**（可逐条移除）→ 用户确认后批量写入。
+ *    在文件管理器勾选多张图片 → 按「歌名/文件名 与 图片文件名 最长公共子串 ≥ 3 字符」自动判定
+ *    对应封面 → **先把匹配结果列出来给用户看**（可逐条移除）→ 用户确认后批量写入。
  *
  * 未匹配上的图片不会写入任何歌曲；一首歌只分配一张图（重合字符最多者）。
  */
@@ -90,43 +87,40 @@ fun CoverToolScreen(vm: PlayerViewModel, onClose: () -> Unit) {
     var pairs by remember { mutableStateOf<List<CoverPair>>(emptyList()) }
     var unmatchedImages by remember { mutableStateOf<List<String>>(emptyList()) }
 
-    // 单曲：系统照片选择器（Photo Picker，无需存储权限）
-    val pickLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.PickVisualMedia()
-    ) { uri ->
+    // 内置文件管理器（图片多选）浮层开关
+    var showFilePicker by remember { mutableStateOf(false) }
+
+    // 文件管理器返回：单曲模式写第一张图；批量模式读图后自动匹配列给用户确认
+    fun handlePicked(uris: List<android.net.Uri>) {
+        showFilePicker = false
+        if (uris.isEmpty()) return
         val t = pendingTrack
         pendingTrack = null
-        if (uri != null && t != null) {
-            scope.launch {
-                val bytes = withContext(Dispatchers.IO) { loadCoverBytes(context, uri) }
+        scope.launch {
+            if (t != null) {
+                // 单曲写入：取第一张选中的图覆盖写回该曲目
+                val bytes = withContext(Dispatchers.IO) { loadCoverBytes(context, uris.first()) }
                 if (bytes != null) {
                     vm.writeTrackCoverArt(t, bytes, "image/jpeg")
                     coveredIds = coveredIds + t.id
                 }
-            }
-        }
-    }
-
-    // 批量：多选图片 → 自动匹配 → 列给用户确认
-    val multiPickLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.PickMultipleVisualMedia(30)
-    ) { uris ->
-        if (uris.isNullOrEmpty()) return@rememberLauncherForActivityResult
-        matching = true
-        scope.launch {
-            val images = withContext(Dispatchers.IO) {
-                uris.mapNotNull { uri ->
-                    val name = queryDisplayName(context, uri) ?: "未命名图片"
-                    val bytes = loadCoverBytes(context, uri) ?: return@mapNotNull null
-                    PickedImage(name, bytes)
+            } else {
+                // 批量：读图 + 自动匹配
+                matching = true
+                val images = withContext(Dispatchers.IO) {
+                    uris.mapNotNull { uri ->
+                        val name = queryDisplayName(context, uri) ?: "未命名图片"
+                        val bytes = loadCoverBytes(context, uri) ?: return@mapNotNull null
+                        PickedImage(name, bytes)
+                    }
                 }
+                val (matched, unmatched) = withContext(Dispatchers.IO) {
+                    matchCovers(tracks, images)
+                }
+                pairs = matched
+                unmatchedImages = unmatched
+                matching = false
             }
-            val (matched, unmatched) = withContext(Dispatchers.IO) {
-                matchCovers(tracks, images)
-            }
-            pairs = matched
-            unmatchedImages = unmatched
-            matching = false
         }
     }
 
@@ -180,11 +174,8 @@ fun CoverToolScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                 item {
                     Card(
                         onClick = {
-                            multiPickLauncher.launch(
-                                PickVisualMediaRequest(
-                                    ActivityResultContracts.PickVisualMedia.ImageOnly
-                                )
-                            )
+                            pendingTrack = null
+                            showFilePicker = true
                         },
                         modifier = Modifier.fillMaxWidth(0.92f),
                         colors = CardDefaults.cardColors(
@@ -194,7 +185,7 @@ fun CoverToolScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                     ) {
                         Text("多选图片 · 自动匹配", fontSize = 11.sp)
                         Text(
-                            "歌名/文件名与图片名重合 ≥3 字符即判定为对应封面",
+                            "在文件管理器勾选图片 → 歌名/文件名与图片名重合 ≥3 字符即判定为对应封面",
                             fontSize = 8.sp,
                             color = Color.Gray,
                         )
@@ -294,11 +285,8 @@ fun CoverToolScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                     item {
                         Button(
                             onClick = {
-                                multiPickLauncher.launch(
-                                    PickVisualMediaRequest(
-                                        ActivityResultContracts.PickVisualMedia.ImageOnly
-                                    )
-                                )
+                                pendingTrack = null
+                                showFilePicker = true
                             },
                             modifier = Modifier
                                 .fillMaxWidth(0.72f)
@@ -317,9 +305,7 @@ fun CoverToolScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                     Card(
                         onClick = {
                             pendingTrack = t
-                            pickLauncher.launch(
-                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                            )
+                            showFilePicker = true
                         },
                         modifier = Modifier.fillMaxWidth(0.92f),
                         colors = CardDefaults.cardColors(
@@ -368,6 +354,14 @@ fun CoverToolScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                 }
                 item { Spacer(Modifier.height(8.dp)) }
             }
+        }
+
+        // 内置文件管理器（图片多选）浮层：替代系统照片选择器
+        if (showFilePicker) {
+            FilePickerScreen(
+                onResult = { handlePicked(it) },
+                onClose = { showFilePicker = false },
+            )
         }
     }
 }

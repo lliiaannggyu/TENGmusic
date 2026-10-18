@@ -56,6 +56,7 @@ import androidx.compose.foundation.focusable
 import androidx.compose.material3.CircularWavyProgressIndicator
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumnDefaults
+import androidx.wear.compose.foundation.lazy.ScalingLazyListScope
 import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 import androidx.wear.compose.material3.Card
@@ -179,6 +180,16 @@ fun AudioSettingsScreen(
     // 频段调节区是否展开（默认折叠，点标题展开预设 + 竖条调节）
     var eqExpanded by remember { mutableStateOf(false) }
     var showLicenses by remember { mutableStateOf(false) }
+    // 设置页各分组默认展开/折叠状态（常用分组默认展开，其余默认折叠，点标题展开）
+    var secPlay by remember { mutableStateOf(true) }
+    var secSound by remember { mutableStateOf(true) }
+    var secSleep by remember { mutableStateOf(false) }
+    var secAppearance by remember { mutableStateOf(false) }
+    var secLyric by remember { mutableStateOf(false) }
+    var secLyricAnim by remember { mutableStateOf(false) }
+    var secLan by remember { mutableStateOf(false) }
+    var secTool by remember { mutableStateOf(true) }
+    var secAbout by remember { mutableStateOf(false) }
     val knobFr = remember { FocusRequester() }
     LaunchedEffect(selectedBand, active) {
         if (selectedBand != null && active) {
@@ -199,186 +210,187 @@ fun AudioSettingsScreen(
                 flingBehavior = ScalingLazyColumnDefaults.snapFlingBehavior(state = listState),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // ========== 1. 播放（最高频操作，置顶）==========
-                item { ListHeader { Text("播放") } }
-
-                item {
-                    SwitchButton(
-                        checked = shuffle,
-                        onCheckedChange = { vm.toggleShuffle() },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text("随机播放", fontSize = 11.sp) },
-                        secondaryLabel = {
-                            Text(if (shuffle) "已开启" else "已关闭", fontSize = 9.sp)
-                        },
-                        colors = accentSwitchColors(accent),
-                    )
-                }
-
-                item {
-                    Text(
-                        "播放速度",
-                        fontSize = 10.sp,
-                        color = Color.Gray,
-                        modifier = Modifier.fillMaxWidth().padding(start = 14.dp, top = 2.dp),
-                    )
-                }
-                SPEED_STEPS.forEach { s ->
+                // ========== 1. 播放（最高频操作，置顶，默认展开）==========
+                collapsibleSection("播放", secPlay, { secPlay = !secPlay }, accent) {
                     item {
-                        RadioButton(
-                            selected = abs(speed - s) < 0.001f,
-                            onSelect = { vm.setSpeed(s) },
+                        SwitchButton(
+                            checked = shuffle,
+                            onCheckedChange = { vm.toggleShuffle() },
                             modifier = Modifier.fillMaxWidth(),
-                            label = {
-                                Text(
-                                    "${"%.2f".format(s).trimEnd('0').trimEnd('.')}x",
-                                    fontSize = 11.sp,
-                                )
+                            label = { Text("随机播放", fontSize = 11.sp) },
+                            secondaryLabel = {
+                                Text(if (shuffle) "已开启" else "已关闭", fontSize = 9.sp)
                             },
-                            colors = accentRadioColors(accent),
+                            colors = accentSwitchColors(accent),
                         )
                     }
-                }
 
-                // ========== 2. 音效（均衡器）==========
-                item { ListHeader { Text("音效") } }
-
-                // EQ 开关（M3E SwitchButton）
-                item {
-                    SwitchButton(
-                        checked = eqEnabled,
-                        onCheckedChange = { vm.setEqEnabled(it) },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text("均衡器", fontSize = 11.sp) },
-                        secondaryLabel = {
-                            Text(if (eqEnabled) "已开启" else "已关闭", fontSize = 9.sp)
-                        },
-                        colors = accentSwitchColors(accent),
-                    )
-                }
-
-                if (eqFreqs.isEmpty()) {
                     item {
                         Text(
-                            "均衡器不可用",
+                            "播放速度",
                             fontSize = 10.sp,
                             color = Color.Gray,
-                            textAlign = TextAlign.Center
+                            modifier = Modifier.fillMaxWidth().padding(start = 14.dp, top = 2.dp),
                         )
                     }
-                } else {
-                    // 频率响应曲线（随各频段增益实时变化）
-                    item {
-                        EqCurve(
-                            freqs = eqFreqs,
-                            gains = eqGains,
-                            accent = accent,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    }
-
-                    // 频段调节（可折叠）：标题卡显示当前预设，点开才显示预设列表 + 竖条调节
-                    item {
-                        Card(
-                            onClick = { eqExpanded = !eqExpanded },
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(percent = 50),
-                            colors = accentCardColors(accent),
-                        ) {
-                            Text(
-                                if (eqExpanded) "频段调节 ▲" else "频段调节 ▼",
-                                fontSize = 11.sp,
-                                color = accent
-                            )
-                            Text(eqPreset, fontSize = 9.sp)
-                        }
-                    }
-
-                    if (eqExpanded) {
-                        // 内置预设（M3E RadioButton 单选）
-                        item { ListHeader { Text("预设") } }
-                        items(EqPresets.ALL.size) { i ->
-                            val preset = EqPresets.ALL[i]
-                            val selected = preset.name == eqPreset
+                    SPEED_STEPS.forEach { s ->
+                        item {
                             RadioButton(
-                                selected = selected,
-                                onSelect = { vm.applyPreset(preset) },
+                                selected = abs(speed - s) < 0.001f,
+                                onSelect = { vm.setSpeed(s) },
                                 modifier = Modifier.fillMaxWidth(),
-                                label = { Text(preset.name, fontSize = 11.sp) },
+                                label = {
+                                    Text(
+                                        "${"%.2f".format(s).trimEnd('0').trimEnd('.')}x",
+                                        fontSize = 11.sp,
+                                    )
+                                },
                                 colors = accentRadioColors(accent),
                             )
                         }
+                    }
+                }
 
-                        // 设备内置预设（系统 Equalizer 自带，移植自 AndroidEqualizer）
-                        if (eqDevicePresets.isNotEmpty()) {
-                            item { ListHeader { Text("设备预设") } }
-                            items(eqDevicePresets.size) { i ->
-                                val name = eqDevicePresets[i]
+                // ========== 2. 音效（均衡器，默认展开）==========
+                collapsibleSection("音效", secSound, { secSound = !secSound }, accent) {
+                    // EQ 开关（M3E SwitchButton）
+                    item {
+                        SwitchButton(
+                            checked = eqEnabled,
+                            onCheckedChange = { vm.setEqEnabled(it) },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("均衡器", fontSize = 11.sp) },
+                            secondaryLabel = {
+                                Text(if (eqEnabled) "已开启" else "已关闭", fontSize = 9.sp)
+                            },
+                            colors = accentSwitchColors(accent),
+                        )
+                    }
+
+                    if (eqFreqs.isEmpty()) {
+                        item {
+                            Text(
+                                "均衡器不可用",
+                                fontSize = 10.sp,
+                                color = Color.Gray,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    } else {
+                        // 频率响应曲线（随各频段增益实时变化）
+                        item {
+                            EqCurve(
+                                freqs = eqFreqs,
+                                gains = eqGains,
+                                accent = accent,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+
+                        // 频段调节（可折叠）：标题卡显示当前预设，点开才显示预设列表 + 竖条调节
+                        item {
+                            Card(
+                                onClick = { eqExpanded = !eqExpanded },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(percent = 50),
+                                colors = accentCardColors(accent),
+                            ) {
+                                Text(
+                                    if (eqExpanded) "频段调节 ▲" else "频段调节 ▼",
+                                    fontSize = 11.sp,
+                                    color = accent
+                                )
+                                Text(eqPreset, fontSize = 9.sp)
+                            }
+                        }
+
+                        if (eqExpanded) {
+                            // 内置预设（M3E RadioButton 单选）
+                            item { ListHeader { Text("预设") } }
+                            items(EqPresets.ALL.size) { i ->
+                                val preset = EqPresets.ALL[i]
+                                val selected = preset.name == eqPreset
                                 RadioButton(
-                                    selected = name == eqPreset,
-                                    onSelect = { vm.applyDevicePreset(i) },
+                                    selected = selected,
+                                    onSelect = { vm.applyPreset(preset) },
                                     modifier = Modifier.fillMaxWidth(),
-                                    label = { Text(name, fontSize = 11.sp) },
+                                    label = { Text(preset.name, fontSize = 11.sp) },
                                     colors = accentRadioColors(accent),
                                 )
                             }
-                        }
 
-                        // 重置为平直（M3E CompactButton）
-                        item {
-                            CompactButton(
-                                onClick = { vm.applyPreset(EqPresets.ALL.first()) },
-                                modifier = Modifier.fillMaxWidth(),
-                            ) {
-                                Text("重置为平直", fontSize = 11.sp)
+                            // 设备内置预设（系统 Equalizer 自带，移植自 AndroidEqualizer）
+                            if (eqDevicePresets.isNotEmpty()) {
+                                item { ListHeader { Text("设备预设") } }
+                                items(eqDevicePresets.size) { i ->
+                                    val name = eqDevicePresets[i]
+                                    RadioButton(
+                                        selected = name == eqPreset,
+                                        onSelect = { vm.applyDevicePreset(i) },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        label = { Text(name, fontSize = 11.sp) },
+                                        colors = accentRadioColors(accent),
+                                    )
+                                }
+                            }
+
+                            // 重置为平直（M3E CompactButton）
+                            item {
+                                CompactButton(
+                                    onClick = { vm.applyPreset(EqPresets.ALL.first()) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Text("重置为平直", fontSize = 11.sp)
+                                }
+                            }
+
+                            // 竖条频段调节（形态移植自 AndroidEqualizer 的 EqualizerView：
+                            // 每频段一根竖向滑条，顶部 dB 值、底部频率，0dB 居中刻度线）
+                            item { ListHeader { Text("频段") } }
+                            item {
+                                EqBandBars(
+                                    freqs = eqFreqs,
+                                    gains = eqGains,
+                                    selected = selectedBand,
+                                    accent = accent,
+                                    onChange = { band, db ->
+                                        selectedBand = band
+                                        vm.setBandGain(band, (db * 100f).toInt())
+                                    },
+                                )
                             }
                         }
+                    }
+                }
 
-                        // 竖条频段调节（形态移植自 AndroidEqualizer 的 EqualizerView：
-                        // 每频段一根竖向滑条，顶部 dB 值、底部频率，0dB 居中刻度线）
-                        item { ListHeader { Text("频段") } }
-                        item {
-                            EqBandBars(
-                                freqs = eqFreqs,
-                                gains = eqGains,
-                                selected = selectedBand,
-                                accent = accent,
-                                onChange = { band, db ->
-                                    selectedBand = band
-                                    vm.setBandGain(band, (db * 100f).toInt())
-                                },
+                // ========== 3. 睡眠定时（默认折叠）==========
+                collapsibleSection("睡眠定时", secSleep, { secSleep = !secSleep }, accent) {
+                    item {
+                        val mins = sleepMinutes
+                        Column(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                if (mins <= 0) "关闭" else "$mins 分钟",
+                                fontSize = 12.sp,
+                                color = accent,
+                                textAlign = TextAlign.Center
+                            )
+                            Slider(
+                                value = mins.toFloat().coerceIn(0f, 120f),
+                                onValueChange = { vm.setSleepTimer(it.roundToInt()) },
+                                steps = 120,
+                                valueRange = 0f..120f,
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = accentSliderColors(accent),
                             )
                         }
                     }
                 }
 
-                // 睡眠定时（无极调节进度条：0–120 分钟连续拖动）
-                item { ListHeader { Text("睡眠定时") } }
-                item {
-                    val mins = sleepMinutes
-                    Column(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(
-                            if (mins <= 0) "关闭" else "$mins 分钟",
-                            fontSize = 12.sp,
-                            color = accent,
-                            textAlign = TextAlign.Center
-                        )
-                        Slider(
-                            value = mins.toFloat().coerceIn(0f, 120f),
-                            onValueChange = { vm.setSleepTimer(it.roundToInt()) },
-                            steps = 120,
-                            valueRange = 0f..120f,
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = accentSliderColors(accent),
-                        )
-                    }
-                }
-
-                // ========== 4. 播放器外观（进度条样式 / 进度环 / 背景）==========
-                item { ListHeader { Text("播放器外观") } }
+                // ========== 4. 播放器外观（进度条样式 / 进度环 / 背景，默认折叠）==========
+                collapsibleSection("播放器外观", secAppearance, { secAppearance = !secAppearance }, accent) {
                 // 进度条样式：圆环 / 波浪圆环（M3E 官方 CircularWavyProgressIndicator 同款）二选一
                 item {
                     Column(
@@ -538,9 +550,10 @@ fun AudioSettingsScreen(
                         )
                     }
                 }
+                }
 
-                // ========== 歌词（字号 / 颜色）==========
-                item { ListHeader { Text("歌词") } }
+                // ========== 歌词（字号 / 颜色，默认折叠）==========
+                collapsibleSection("歌词", secLyric, { secLyric = !secLyric }, accent) {
 
                 // 歌词字号（12sp ~ 22sp，实时预览生效）
                 item {
@@ -628,9 +641,10 @@ fun AudioSettingsScreen(
                         onApply = { vm.setLyricCustomColor(it) },
                     )
                 }
+                }
 
-                // ========== 歌词切换动画（多动画可选 + 实时预览）==========
-                item { ListHeader { Text("歌词切换动画") } }
+                // ========== 歌词切换动画（多动画可选 + 实时预览，默认折叠）==========
+                collapsibleSection("歌词切换动画", secLyricAnim, { secLyricAnim = !secLyricAnim }, accent) {
                 items(LyricTransition.entries.size) { i ->
                     val anim = LyricTransition.entries[i]
                     Column(
@@ -651,9 +665,10 @@ fun AudioSettingsScreen(
                         LyricTransitionPreview(anim, accent)
                     }
                 }
+                }
 
-                // ========== 6. 局域网（传歌 / 一起听）==========
-                item { ListHeader { Text("局域网") } }
+                // ========== 6. 局域网（传歌 / 一起听，默认折叠）==========
+                collapsibleSection("局域网", secLan, { secLan = !secLan }, accent) {
                 item {
                     Card(
                         onClick = onOpenLanTransfer,
@@ -694,9 +709,10 @@ fun AudioSettingsScreen(
                         )
                     }
                 }
+                }
 
-                // ========== 7. 工具 ==========
-                item { ListHeader { Text("工具") } }
+                // ========== 7. 工具（默认展开）==========
+                collapsibleSection("工具", secTool, { secTool = !secTool }, accent) {
                 item {
                     Card(
                         onClick = onOpenCoverTool,
@@ -705,12 +721,13 @@ fun AudioSettingsScreen(
                         colors = accentCardColors(accent),
                     ) {
                         Text("封面工具", fontSize = 11.sp)
-                        Text("批量匹配并写入专辑封面", fontSize = 9.sp)
+                        Text("内置文件管理器多选图片 · 匹配并写入专辑封面", fontSize = 9.sp)
                     }
                 }
+                }
 
-                // ========== 7. 关于 ==========
-                item { ListHeader { Text("关于") } }
+                // ========== 8. 关于（默认折叠）==========
+                collapsibleSection("关于", secAbout, { secAbout = !secAbout }, accent) {
 
                 // 播放器主题：仅保留 M3E 一套 UI（经典主题已移除），无需再切换
                 item {
@@ -762,6 +779,7 @@ fun AudioSettingsScreen(
                         textAlign = TextAlign.Center
                     )
                 }
+                }
             }
 
             // 微调模式覆盖提示条：选中频段后，表冠直接调增益
@@ -799,6 +817,48 @@ fun AudioSettingsScreen(
 }
 
 // ---------------- 主题色衍生的 M3E 组件颜色（#82：列表组件颜色跟随主题色） ----------------
+
+/**
+ * 设置页可折叠分组：标题卡点按展开/收起，展开后显示分组内的所有条目。
+ * 标题卡用强调色文字 + 展开指示箭头（▲ 展开 / ▼ 折叠），整卡可点。
+ * 作为 ScalingLazyListScope 的扩展使用，分组内容以 [content] 传入。
+ */
+private fun ScalingLazyListScope.collapsibleSection(
+    title: String,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    accent: Color,
+    content: ScalingLazyListScope.() -> Unit,
+) {
+    item {
+        Card(
+            onClick = onToggle,
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(percent = 50),
+            colors = accentCardColors(accent),
+        ) {
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    title,
+                    fontSize = 12.sp,
+                    color = accent,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    if (expanded) "▲" else "▼",
+                    fontSize = 11.sp,
+                    color = accent,
+                )
+            }
+        }
+    }
+    if (expanded) {
+        content()
+    }
+}
 
 /** Card 容器/内容/标题色由强调色衍生 */
 @Composable
