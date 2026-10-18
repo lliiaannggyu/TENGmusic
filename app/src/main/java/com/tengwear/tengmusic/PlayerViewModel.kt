@@ -214,6 +214,22 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     private val _coverMessage = MutableStateFlow<String?>(null)
     val coverMessage = _coverMessage.asStateFlow()
 
+    // ---------------- 一起听（局域网推送播放） ----------------
+
+    /**
+     * 是否正在播放「一起听」推送来的缓存歌曲。
+     * 该歌曲不在本地曲目表里，poll() 在此期间不得用 controller 队列下标
+     * 反查覆盖当前曲目（否则显示会跳回本地曲目）。
+     */
+    private val _sharedMode = MutableStateFlow(false)
+    val sharedMode: StateFlow<Boolean> = _sharedMode.asStateFlow()
+
+    /** 局域网传歌压缩阈值（MB）：超过该体积先压缩再传，对方收到后解压 */
+    private val _lanCompressThresholdMb = MutableStateFlow(
+        SettingsRepository.getLanCompressThresholdMb(getApplication())
+    )
+    val lanCompressThresholdMb = _lanCompressThresholdMb.asStateFlow()
+
     private var controller: MediaController? = null
     private var sleepJob: Job? = null
     /**
@@ -278,12 +294,16 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                 else -> PlayMode.SEQUENTIAL
             }
             _speed.value = c.playbackParameters.speed
-            val idx = resolveGlobalIndex(c.currentMediaItemIndex)
-            if (idx != _currentIndex.value) {
-                _currentIndex.value = idx
-                _currentTrack.value = _tracks.value.getOrNull(idx)
-                loadLyricsFor(idx)
-                updateAlbumColor(idx)
+            // 一起听模式下当前曲目是缓存里的推送歌曲（不在本地曲目表中），
+            // 不能用 controller 队列下标反查覆盖，否则显示会跳回本地曲目
+            if (!_sharedMode.value) {
+                val idx = if (c.mediaItemCount > 0) resolveGlobalIndex(c.currentMediaItemIndex) else -1
+                if (idx != _currentIndex.value) {
+                    _currentIndex.value = idx
+                    _currentTrack.value = _tracks.value.getOrNull(idx)
+                    loadLyricsFor(idx)
+                    updateAlbumColor(idx)
+                }
             }
             syncEq()
             updateLyric(_position.value)
@@ -476,6 +496,94 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
     fun clearCoverMessage() {
         _coverMessage.value = null
+    }
+
+    // ---------------- 一起听（局域网）API ----------------
+
+    /**
+     * 播放「一起听」推送来的歌曲：文件在缓存目录（不落媒体库），
+     * 歌词由推送方一并提供。进入 sharedMode 后 poll 暂停本地曲目同步。
+     * controller 未就绪时缓存意图，连接后自动补播。
+     */
+    fun playSharedSong(file: java.io.File, title: String, artist: String, lyricText: String?) {
+        val uri = Uri.fromFile(file)
+        val item = MediaItem.fromUri(uri)
+        val play: () -> Unit = {
+            controller?.let { c ->
+                c.setMediaItems(listOf(item))
+                c.seekToDefaultPosition(0)
+                c.play()
+            }
+        }
+        if (controller == null) pendingPlay = play else play()
+
+        _sharedMode.value = true
+        activeQueueIds = null
+        _currentIndex.value = -1
+        _currentTrack.value = Track(
+            id = -1L,
+            title = title.ifBlank { file.name },
+            artist = artist,
+            album = "一起听",
+            albumId = -1L,
+            duration = 0L,
+            displayName = file.name,
+            uri = uri,
+        )
+        _lyrics.value = lyricText?.let { runCatching { LrcParser.parse(it) }.getOrNull() } ?: emptyList()
+        _lyricIndex.value = -1
+        _albumColor.value = null
+        recomputeLyricColor()
+    }
+
+    /**
+     * 退出一起听：停止播放、删除缓存目录（不留残余文件），
+     * 当前曲目回到空态（下一次 poll 会按本地队列重新同步）。
+     */
+    fun exitListenTogether() {
+        _sharedMode.value = false
+        controller?.let { c ->
+            c.stop()
+            c.clearMediaItems()
+        }
+        _currentIndex.value = -1
+        _currentTrack.value = null
+        _lyrics.value = emptyList()
+        _lyricIndex.value = -1
+        _albumColor.value = null
+        recomputeLyricColor()
+        com.tengwear.tengmusic.lan.LanManager.clearListenTogether()
+    }
+
+    /** 重新扫描本地音乐（接收到传歌后调用，让新歌立刻出现在曲目/专辑列表） */
+    fun refreshLibrary() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val loaded = AudioRepository.loadTracks(getApplication())
+            _tracks.value = loaded
+            _albums.value = groupTracksIntoAlbums(loaded)
+        }
+    }
+
+    /** 设置局域网传歌压缩阈值（MB，1 ~ 100） */
+    fun setLanCompressThresholdMb(mb: Int) {
+        val v = mb.coerceIn(1, 100)
+        _lanCompressThresholdMb.value = v
+        SettingsRepository.setLanCompressThresholdMb(getApplication(), v)
+    }
+
+    /**
+     * 把当前已解析的歌词序列化回 LRC 原文（一起听推送用）。
+     * 无歌词时返回 null（对端按无歌词播放）。
+     */
+    fun currentLyricTextForPush(): String? {
+        val list = _lyrics.value
+        if (list.isEmpty()) return null
+        return list.joinToString("\n") { line ->
+            val mm = line.timeMs / 60000
+            val ss = line.timeMs / 1000 % 60
+            val xx = line.timeMs / 10 % 100
+            String.format(java.util.Locale.US, "[%02d:%02d.%02d]%s", mm, ss, xx, line.text)
+        }
     }
 
     /**

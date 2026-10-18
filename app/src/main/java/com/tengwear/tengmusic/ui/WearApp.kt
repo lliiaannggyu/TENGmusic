@@ -7,6 +7,8 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -19,6 +21,7 @@ import androidx.wear.compose.material3.AppScaffold
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import com.tengwear.tengmusic.PlayerViewModel
+import com.tengwear.tengmusic.lan.LanManager
 import kotlinx.coroutines.launch
 
 /**
@@ -43,9 +46,21 @@ fun WearMusicApp(vm: PlayerViewModel) {
                 var showTrackList by remember { mutableStateOf(false) }
                 var showAlbumFlow by remember { mutableStateOf(false) }
                 var showCoverTool by remember { mutableStateOf(false) }
+                var showLanTransfer by remember { mutableStateOf(false) }
+                var showListenTogether by remember { mutableStateOf(false) }
                 // 当前可见页：横向翻页三页同在组合树，靠它决定哪一页「独占」表冠焦点
                 val currentPage = pager.currentPage
                 val scope = rememberCoroutineScope()
+
+                // 对端传来请求时自动打开对应页面（StateFlow 承载，不会丢事件）
+                val pendingSongOffer by LanManager.pendingSongOffer.collectAsState()
+                val pendingListenOffer by LanManager.pendingListenOffer.collectAsState()
+                LaunchedEffect(pendingSongOffer) {
+                    if (pendingSongOffer != null) showLanTransfer = true
+                }
+                LaunchedEffect(pendingListenOffer) {
+                    if (pendingListenOffer != null) showListenTogether = true
+                }
 
                 // 返回键行为（除初始播放器页外，一律「返回上一级」而非退出应用）：
                 //   1) 专辑流浮层打开  → 关闭专辑流
@@ -58,7 +73,13 @@ fun WearMusicApp(vm: PlayerViewModel) {
                 BackHandler(enabled = !showAlbumFlow && !showTrackList && showCoverTool) {
                     showCoverTool = false
                 }
-                BackHandler(enabled = !showAlbumFlow && !showTrackList && !showCoverTool && currentPage != 0) {
+                BackHandler(enabled = !showAlbumFlow && !showTrackList && !showCoverTool && showLanTransfer) {
+                    showLanTransfer = false
+                }
+                BackHandler(enabled = !showAlbumFlow && !showTrackList && !showCoverTool && !showLanTransfer && showListenTogether) {
+                    showListenTogether = false
+                }
+                BackHandler(enabled = !showAlbumFlow && !showTrackList && !showCoverTool && !showLanTransfer && !showListenTogether && currentPage != 0) {
                     scope.launch { pager.animateScrollToPage(0) }
                 }
 
@@ -82,6 +103,8 @@ fun WearMusicApp(vm: PlayerViewModel) {
                             vm = vm,
                             onOpenAlbumFlow = { showAlbumFlow = true },
                             onOpenCoverTool = { showCoverTool = true },
+                            onOpenLanTransfer = { showLanTransfer = true },
+                            onOpenListenTogether = { showListenTogether = true },
                             active = currentPage == 2 && !showAlbumFlow && !showCoverTool,
                         )
                     }
@@ -92,6 +115,12 @@ fun WearMusicApp(vm: PlayerViewModel) {
                 }
                 if (showCoverTool) {
                     CoverToolScreen(vm = vm, onClose = { showCoverTool = false })
+                }
+                if (showLanTransfer) {
+                    LanTransferScreen(vm = vm, onClose = { showLanTransfer = false })
+                }
+                if (showListenTogether) {
+                    ListenTogetherScreen(vm = vm, onClose = { showListenTogether = false })
                 }
                 AnimatedVisibility(
                     visible = showAlbumFlow,

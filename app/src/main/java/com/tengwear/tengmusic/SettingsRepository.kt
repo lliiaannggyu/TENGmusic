@@ -42,6 +42,12 @@ object SettingsRepository {
     /** 歌词字号（sp，12 ~ 22，默认 15） */
     private const val KEY_LYRIC_FONT_SIZE = "lyric_font_size"
 
+    /**
+     * 局域网传歌压缩阈值（MB）：待传文件体积超过它时先压缩再传输，
+     * 对方收到后自动解压。默认 20MB。
+     */
+    private const val KEY_LAN_COMPRESS_MB = "lan_compress_threshold_mb"
+
     fun getLyricColorMode(context: Context): Int =
         context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
             .getInt(KEY_LYRIC_COLOR_MODE, 0)
@@ -133,6 +139,19 @@ object SettingsRepository {
         context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
             .edit()
             .putFloat(KEY_LYRIC_FONT_SIZE, sp.coerceIn(12f, 22f))
+            .apply()
+    }
+
+    /** 局域网传歌压缩阈值（MB），读取时钳制在 1 ~ 100 */
+    fun getLanCompressThresholdMb(context: Context): Int =
+        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+            .getInt(KEY_LAN_COMPRESS_MB, 20)
+            .coerceIn(1, 100)
+
+    fun setLanCompressThresholdMb(context: Context, mb: Int) {
+        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+            .edit()
+            .putInt(KEY_LAN_COMPRESS_MB, mb.coerceIn(1, 100))
             .apply()
     }
 }

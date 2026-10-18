@@ -125,6 +125,7 @@ private val CARD_BG = Color(0xF20B0B0E)
  * - 睡眠定时
  * - 歌词：字号、颜色（M3 官方 tonal 色阶 / 自定义十六进制色号）
  * - 歌词切换动画：多种切换动画可选，带实时预览
+ * - 局域网：传歌（超阈值先压缩）、一起听（推当前歌+歌词，退出不留残余）、压缩阈值
  * - 工具：封面工具（批量写入专辑封面）
  * - 关于：UI 版本信息、开源许可
  * - 支持旋转表冠滚动列表
@@ -136,6 +137,8 @@ private val CARD_BG = Color(0xF20B0B0E)
  * 不再只剩一个开关。点某个频段即可选中，随后旋转表冠以 1dB 步进微调该频段。
  *
  * @param onOpenCoverTool 打开封面工具（给音频文件写入专辑封面）
+ * @param onOpenLanTransfer 打开局域网传歌页（同一 Wi-Fi 下互传歌曲文件）
+ * @param onOpenListenTogether 打开一起听页（把当前歌曲+歌词推给附近设备）
  * @param active          仅当前可见页时抢占表冠焦点（横向翻页三页同在组合树，必须互斥）
  */
 @Composable
@@ -143,6 +146,8 @@ fun AudioSettingsScreen(
     vm: PlayerViewModel,
     onOpenAlbumFlow: () -> Unit = {},
     onOpenCoverTool: () -> Unit = {},
+    onOpenLanTransfer: () -> Unit = {},
+    onOpenListenTogether: () -> Unit = {},
     active: Boolean = true,
 ) {
     val eqEnabled by vm.eqEnabled.collectAsState()
@@ -646,7 +651,48 @@ fun AudioSettingsScreen(
                     }
                 }
 
-                // ========== 6. 工具 ==========
+                // ========== 6. 局域网（传歌 / 一起听）==========
+                item { ListHeader { Text("局域网") } }
+                item {
+                    Card(
+                        onClick = onOpenLanTransfer,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = accentCardColors(accent),
+                    ) {
+                        Text("传歌", fontSize = 11.sp)
+                        Text("同一 Wi-Fi 下互传歌曲文件", fontSize = 9.sp)
+                    }
+                }
+                item {
+                    Card(
+                        onClick = onOpenListenTogether,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = accentCardColors(accent),
+                    ) {
+                        Text("一起听", fontSize = 11.sp)
+                        Text("把当前歌曲+歌词推给附近设备", fontSize = 9.sp)
+                    }
+                }
+                // 压缩阈值：超过该体积的文件先压缩再传，对方收到后自动解压
+                item {
+                    val thresholdMb by vm.lanCompressThresholdMb.collectAsState()
+                    Column(
+                        Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Text("超过 $thresholdMb MB 先压缩", fontSize = 11.sp, color = accent)
+                        Slider(
+                            value = thresholdMb.toFloat(),
+                            onValueChange = { vm.setLanCompressThresholdMb(it.toInt()) },
+                            steps = 32,
+                            valueRange = 1f..100f,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = accentSliderColors(accent),
+                        )
+                    }
+                }
+
+                // ========== 7. 工具 ==========
                 item { ListHeader { Text("工具") } }
                 item {
                     Card(
