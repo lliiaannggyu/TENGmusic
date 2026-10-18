@@ -359,62 +359,35 @@ fun WearPlayerScreen(
                         customItem(
                             buttonGroupContent = {
                                 if (progressStyle == SettingsRepository.PROGRESS_STYLE_WAVY) {
-                                    // 波浪环（参考图形态）——全部由官方
-                                    // CircularWavyProgressIndicator 叠加而成，零自绘。
-                                    // 官方组件内部固定 48dp 画布，描边取画布 px 系的值，
-                                    // 用 scale 等比放大到目标尺寸；rotate(-90) 让进度弧
-                                    // 从 12 点起顺时针生长，同时把波浪波峰对准 12 点。
+                                    // 波浪环：完全照参考图的「实心波浪盘 + 一圈波浪轨道 + 骑轨进度弧」。
+                                    // 三层都由 androidx.compose.material3.CircularWavyProgressIndicator
+                                    // （Material3 1.5.0-alpha18，Apache-2.0）绘制，零自绘。
                                     //
-                                    // 形态标定（官方源码 + graphics-shapes 星形圆角
-                                    // 算法数值模拟，非估计值）：
-                                    //   ① 中心实心波浪盘：progress=1 + 超粗描边
-                                    //      （画布 21.2dp ≈ 路径半径的 79%）。官方波浪
-                                    //      路径 = Morph(圆→星).toPath(amplitude)，星形经
-                                    //      CornerRounding 钝化后峰半径 0.886、谷 0.784
-                                    //      （实测），振幅 1 时波深 = 0.102×13.4 ≈ 1.37
-                                    //      画布单位 ≈ 盘半径 6%；谷底内界越过圆心 →
-                                    //      实心盘；波长 10.5 → round(2πr/λ)=8 瓣。
-                                    //   ② 中环·波浪轨道：progress=1 + 细描边 2.7dp +
-                                    //      振幅 0.513，8 瓣，波深同样 1.37 画布单位 →
-                                    //      与盘之间保持恒定细缝（不重叠、不远离）。
-                                    //   ③ 中环·进度弧：与②同半径/描边/振幅/波长/波速，
-                                    //      progress 跟随播放进度，主题色，波形精确重合
-                                    //      在中环轨道上（骑浪而行）。
-                                    //   ④ 外环·波浪轨道：同②几何，再放大 1.157 倍、
-                                    //      振幅 0.444，与中环等距。
+                                    // 官方绘制模型（CircularWavyProgressModifiers.kt:1338 / 1107 / 1139）：
+                                    //   r = 48/2 - stroke/2；vertices = max(5, round(2πr/λ))；
+                                    //   path = Morph(circle → star(N)).toPath(amplitude)；再 scale(48 - stroke)
+                                    //   → 描边外缘恒等于容器边缘。故「超粗 stroke」即实心盘：
+                                    //   内缘 = 24 - stroke，stroke ≥ 24 时无孔。
+                                    // 圆角星形 N=8 实测峰 0.8864r / 谷 0.7844r（amp=1 → 波幅 ±5.1%）。
                                     //
-                                    // 动画语义（官方源码推导，与参考图一致）：
-                                    //   - 波浪流向：路径窗口沿路径前移 offset×周长 +
-                                    //     rotateZ(-offsetAngle) 补偿 → 波峰视觉逆时针流动；
-                                    //   - 进度弧：窗口固定 [0, progress×360°]，本身不旋转，
-                                    //     从 12 点顺时针变长；
-                                    //   - 相位同步：四例全部 8 瓣、同帧启动；取
-                                    //     waveSpeed = 0.5×波长 → 角速度 ω=2πv/(λN)
-                                    //     四例相等 → 波峰永远互相对齐（16 秒一圈）；
-                                    //   - 振幅门控：播放 → 目标振幅（官方
-                                    //     Increasing/DecreasingAmplitude 缓动），暂停 → 0
-                                    //     （平滑退化为平滑圆，offset 动画停止，省电）。
-                                    val discDiam: Dp = playSize * 1.132f
-                                    val midDiam: Dp = playSize * 1.307f
-                                    val outerDiam: Dp = playSize * 1.513f
-                                    val scaleDisc =
-                                        discDiam / WavyProgressIndicatorDefaults.CircularContainerSize
-                                    val scaleMid =
-                                        midDiam / WavyProgressIndicatorDefaults.CircularContainerSize
-                                    val scaleOuter =
-                                        outerDiam / WavyProgressIndicatorDefaults.CircularContainerSize
-                                    // Stroke.width 是画布 px：画布 dp × density
-                                    val strokeDisc: Float = with(density) { 21.2f.dp.toPx() }
-                                    val strokeRing: Float = with(density) { 2.7f.dp.toPx() }
-                                    // waveSpeed = 0.5×波长 → duration=(λ/v)×1000×8=16s，
-                                    // 四例角速度相同，波峰锁定不漂移
-                                    val waveSpeedDisc: Dp = 5.25.dp
-                                    val waveSpeedRing: Dp = 8.9.dp
-                                    val ampDisc: (Float) -> Float = { if (isPlaying) 1f else 0f }
-                                    val ampMid: (Float) -> Float = { if (isPlaying) 0.513f else 0f }
-                                    val ampOuter: (Float) -> Float = { if (isPlaying) 0.444f else 0f }
-                                    // 中心盘为不透明主题色 → 图标按盘面亮度自动取
-                                    // 深 teal / 白，保证任意主题色下的对比度
+                                    // 参考图径向剖面实测（328×311）：盘峰径 218 / 谷径 192；轨道中心径 259、
+                                    // 径向宽 19、内缘径 240（盘外留约 11px 暗缝）；进度弧骑在轨道上，
+                                    // 从 12 点起顺时针变长（窗口固定不旋转）。
+                                    //
+                                    // 参数换算（P = 盘峰径）：
+                                    //   盘   stroke 24dp → 峰 22.64 画布单位 → scale = P/45.28（内缘 -2 → 实心）
+                                    //   轨道 stroke 2.77dp → 中心线 18.88 → scale = 0.0314P（视觉宽 0.087P）
+                                    //   λ = 2πr/8（锁 8 瓣）；waveSpeed = λ/2 → 两例角速度相同，波峰永不漂移
+                                    val p: Float = playSize.value
+                                    val scaleDisc: Float = p / 45.28f
+                                    val scaleRing: Float = 0.0314f * p
+                                    val strokeDisc: Float = with(density) { 24.dp.toPx() }
+                                    val strokeRing: Float = with(density) { 2.77.dp.toPx() }
+                                    val ringBox: Dp = playSize * 1.51f
+                                    // 播放 → 振幅 1（±5.1%，与参考图一致）；暂停 → 0
+                                    // （官方 Increasing/DecreasingAmplitude 缓动，平滑退化为圆）
+                                    val waveAmp: (Float) -> Float = { if (isPlaying) 1f else 0f }
+                                    // 盘面为不透明主题色 → 图标按亮度取深 teal / 白
                                     val wavyIcon: Color =
                                         if (themeColor.luminance() > 0.4f) {
                                             Color(0xFF06343B)
@@ -423,12 +396,11 @@ fun WearPlayerScreen(
                                         }
                                     Box(
                                         modifier = Modifier
-                                            .size(outerDiam)
+                                            .size(ringBox)
                                             .animateWidth(playIS),
                                         contentAlignment = Alignment.Center,
                                     ) {
-                                        // ① 中心实心波浪盘（满进度 + 超粗描边 = 实心
-                                        // 波浪花盘；轨道置透明避免平滑圆从谷底透出）
+                                        // ① 实心波浪盘（stroke 24 → 内缘 -2，中心无孔）
                                         CircularWavyProgressIndicator(
                                             progress = { 1f },
                                             modifier = Modifier
@@ -437,84 +409,43 @@ fun WearPlayerScreen(
                                                 .rotate(-90f),
                                             color = themeColor,
                                             trackColor = Color.Transparent,
-                                            stroke = Stroke(
-                                                width = strokeDisc,
-                                                cap = StrokeCap.Round,
-                                            ),
-                                            trackStroke = Stroke(
-                                                width = strokeDisc,
-                                                cap = StrokeCap.Round,
-                                            ),
-                                            amplitude = ampDisc,
-                                            wavelength = 10.5.dp,
-                                            waveSpeed = waveSpeedDisc,
+                                            stroke = Stroke(strokeDisc, cap = StrokeCap.Round),
+                                            trackStroke = Stroke(strokeDisc, cap = StrokeCap.Round),
+                                            amplitude = waveAmp,
+                                            wavelength = 9.42.dp,
+                                            waveSpeed = 4.71.dp,
                                             gapSize = 0.dp,
                                         )
-                                        // ② 中环·浅色整圈波浪轨道
+                                        // ② 整圈波浪轨道
                                         CircularWavyProgressIndicator(
                                             progress = { 1f },
                                             modifier = Modifier
                                                 .align(Alignment.Center)
-                                                .scale(scaleMid)
+                                                .scale(scaleRing)
                                                 .rotate(-90f),
                                             color = Color(0x66FFFFFF),
                                             trackColor = Color.Transparent,
-                                            stroke = Stroke(
-                                                width = strokeRing,
-                                                cap = StrokeCap.Round,
-                                            ),
-                                            trackStroke = Stroke(
-                                                width = strokeRing,
-                                                cap = StrokeCap.Round,
-                                            ),
-                                            amplitude = ampMid,
-                                            wavelength = 17.8.dp,
-                                            waveSpeed = waveSpeedRing,
+                                            stroke = Stroke(strokeRing, cap = StrokeCap.Round),
+                                            trackStroke = Stroke(strokeRing, cap = StrokeCap.Round),
+                                            amplitude = waveAmp,
+                                            wavelength = 17.75.dp,
+                                            waveSpeed = 8.88.dp,
                                             gapSize = 0.dp,
                                         )
-                                        // ③ 中环·主题色进度弧（与②同参数 → 波形精确
-                                        // 重合在轨道波上；12 点起顺时针变长）
+                                        // ③ 进度弧：与②同几何 → 波形精确重合，12 点起顺时针变长
                                         CircularWavyProgressIndicator(
                                             progress = { animatedProgress },
                                             modifier = Modifier
                                                 .align(Alignment.Center)
-                                                .scale(scaleMid)
+                                                .scale(scaleRing)
                                                 .rotate(-90f),
                                             color = themeColor,
                                             trackColor = Color.Transparent,
-                                            stroke = Stroke(
-                                                width = strokeRing,
-                                                cap = StrokeCap.Round,
-                                            ),
-                                            trackStroke = Stroke(
-                                                width = strokeRing,
-                                                cap = StrokeCap.Round,
-                                            ),
-                                            amplitude = ampMid,
-                                            wavelength = 17.8.dp,
-                                            waveSpeed = waveSpeedRing,
-                                            gapSize = 0.dp,
-                                        )
-                                        // ④ 外环·深色整圈波浪轨道
-                                        CircularWavyProgressIndicator(
-                                            progress = { 1f },
-                                            modifier = Modifier
-                                                .align(Alignment.Center)
-                                                .scale(scaleOuter)
-                                                .rotate(-90f),
-                                            color = Color(0x3DFFFFFF),
-                                            trackColor = Color.Transparent,
-                                            stroke = Stroke(
-                                                width = strokeRing,
-                                                cap = StrokeCap.Round,
-                                            ),
-                                            trackStroke = Stroke(
-                                                width = strokeRing,
-                                                cap = StrokeCap.Round,
-                                            ),
-                                            amplitude = ampOuter,
-                                            wavelength = 17.8.dp,
-                                            waveSpeed = waveSpeedRing,
+                                            stroke = Stroke(strokeRing, cap = StrokeCap.Round),
+                                            trackStroke = Stroke(strokeRing, cap = StrokeCap.Round),
+                                            amplitude = waveAmp,
+                                            wavelength = 17.75.dp,
+                                            waveSpeed = 8.88.dp,
                                             gapSize = 0.dp,
                                         )
                                         PlayPauseButton(
@@ -526,7 +457,7 @@ fun WearPlayerScreen(
                                             iconColor = wavyIcon,
                                             interactionSource = playIS,
                                         )
-                                    }
+                                }
                                 } else {
                                     PlayPauseButton(
                                         isPlaying = isPlaying,

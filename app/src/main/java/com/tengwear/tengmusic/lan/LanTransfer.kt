@@ -7,6 +7,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.BufferedInputStream
+import java.io.ByteArrayOutputStream
 import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileOutputStream
@@ -32,14 +33,18 @@ internal object LanTransfer {
     private const val TAG = "LanTransfer"
     private const val BUF = 64 * 1024
 
-    /** 从流里读一行（遇 '\n' 止，不缓冲超额字节，保证后续还能原样读二进制） */
+    /**
+     * 从流里读一行（遇 '\n' 止，不缓冲超额字节，保证后续还能原样读二进制）。
+     * 以 UTF-8 解码：先前逐字节 [Byte.toChar] 会把中文等多字节字符拆成乱码，
+     * 导致标题/艺术家/歌词中文全部乱码（#110）。
+     */
     fun readHeaderLine(input: InputStream, maxBytes: Int = 1 shl 20): String? {
-        val sb = StringBuilder()
-        while (sb.length < maxBytes) {
+        val buf = ByteArrayOutputStream()
+        while (buf.size() < maxBytes) {
             val b = input.read()
-            if (b < 0) return if (sb.isEmpty()) null else sb.toString()
-            if (b == '\n'.code) return sb.toString()
-            sb.append(b.toChar())
+            if (b < 0) return if (buf.size() == 0) null else buf.toString(Charsets.UTF_8)
+            if (b == '\n'.code) return buf.toString(Charsets.UTF_8)
+            buf.write(b)
         }
         return null
     }

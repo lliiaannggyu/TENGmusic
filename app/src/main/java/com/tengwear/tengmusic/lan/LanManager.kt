@@ -19,11 +19,13 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
+import java.io.OutputStream
 import java.net.Socket
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -56,9 +58,6 @@ object LanManager {
     /** 待用户决定的传入请求：transferId → 是否接受 */
     private val pending = ConcurrentHashMap<String, CompletableDeferred<Boolean>>()
 
-    /** 一起听已落盘的缓存文件：transferId → 文件（UI 取出后播放） */
-    private val stagedListen = ConcurrentHashMap<String, File>()
-
     private val _peers = MutableStateFlow<List<LanPeer>>(emptyList())
     val peers: StateFlow<List<LanPeer>> = _peers.asStateFlow()
 
@@ -77,6 +76,42 @@ object LanManager {
 
     private val _events = MutableSharedFlow<LanEvent>(extraBufferCapacity = 64)
     val events: SharedFlow<LanEvent> = _events.asSharedFlow()
+
+    /**
+     * 一起听「控制命令」流（解析后供 ViewModel 应用）：主播周期下发 / 事件下发的
+     * [State]（idx/pos/playing），以及结束会话的 [Stop]。仅嘉宾侧消费。
+     */
+    private val _controlCommands = MutableSharedFlow<LanControlCommand>(extraBufferCapacity = 32)
+    val controlCommands: SharedFlow<LanControlCommand> = _controlCommands.asSharedFlow()
+
+    /** 嘉宾端已落盘、按推送顺序排列的临时歌单（索引与主播歌单严格对齐） */
+    private val _listenSongs = MutableStateFlow<List<SharedSong>>(emptyList())
+    val listenSongs: StateFlow<List<SharedSong>> = _listenSongs.asStateFlow()
+
+    /** 主播端当前会话（持有持久控制连接）；为 null 表示未在进行一起听 */
+    private var leaderSession: LeaderSession? = null
+
+    /** 主播端临时歌单缓存文件 + 元信息 */
+    data class SharedSong(val meta: SharedMeta, val file: File)
+
+    /** 主播端会话：持有与嘉宾的持久 TCP 连接（推送文件后保持打开，继续走控制命令） */
+    private data class LeaderSession(
+        val peer: LanPeer,
+        var socket: Socket? = null,
+        var out: OutputStream? = null,
+    )
+
+    /** 一起听控制命令（嘉宾侧解析后应用） */
+    sealed interface LanControlCommand {
+        /** 周期/事件状态同步：跳到 idx、对齐到 pos、按 playing 播放或暂停 */
+        data class State(val idx: Int, val pos: Long, val playing: Boolean) : LanControlCommand
+
+        /** 主播结束会话：嘉宾退出一起听 */
+        object Stop : LanControlCommand
+    }
+
+    fun isLeaderSessionActive(): Boolean = leaderSession != null
+
 
     // ---------------- 生命周期 ----------------
 
@@ -115,7 +150,8 @@ object LanManager {
     /** 删除一起听缓存目录（退出一起听 / 启动清残留共用） */
     fun clearListenTogether() {
         ctx?.let { cleanupDir(File(it.cacheDir, LISTEN_DIR)) }
-        stagedListen.clear()
+        _listenSongs.value = emptyList()
+        leaderSession = null
     }
 
     private fun cleanupDir(dir: File) {
@@ -147,27 +183,101 @@ object LanManager {
     }
 
     /**
-     * 一起听：把 [track]（+歌词文本）推给 [peer]，对方接受后直接播放，
-     * 文件只在对方缓存目录，退出即删。
+     * 一起听（主播侧）：把 [tracks] 整张临时歌单 + 各自歌词一次性邀请推给 [peer]。
+     * 流程：发邀请头（含 count + 歌单元信息 + 各文件尺寸）→ 等一次接受 → 顺序推 N 个文件
+     * → 连接保持打开，后续由 [sendListenState] 周期下发控制命令实现进度/切歌/暂停同步。
+     * 文件只在嘉宾缓存目录，退出即删。
      */
-    fun pushListen(peer: LanPeer, track: Track, lyricText: String?) {
+    fun pushListenSession(
+        peer: LanPeer,
+        tracks: List<Track>,
+        lyrics: List<String?>,
+    ) {
+        if (tracks.isEmpty()) return
         val id = UUID.randomUUID().toString()
+        val app = ctx ?: return
+        val resolver = app.contentResolver
+        // 先量各文件尺寸（用于整体进度）
+        val sizes = tracks.map { t ->
+            runCatching { resolver.openAssetFileDescriptor(t.uri, "r")?.use { it.length } }
+                .getOrNull() ?: -1L
+        }
+        val total = sizes.sumOf { if (it > 0) it else 0L }
+        val queue = tracks.mapIndexed { i, t ->
+            SharedMeta(t.title, t.artist, lyrics.getOrNull(i), 0L)
+        }
         addTransfer(
-            TransferState(id, peer.name, track.displayName, LanProtocol.KIND_LISTEN, sending = true)
+            TransferState(id, peer.name, "一起听歌单(${tracks.size}首)", LanProtocol.KIND_LISTEN, sending = true, total = total)
         )
         scope.launch {
-            val header = JSONObject().apply {
-                put("kind", LanProtocol.KIND_LISTEN)
-                put("id", id)
-                put("name", track.displayName)
-                put("from", myName)
-                put("title", track.title)
-                put("artist", track.artist)
-                put("lyric", lyricText ?: "")
+            val socket = try {
+                Socket().apply {
+                    connect(java.net.InetSocketAddress(peer.host, peer.port), 8000)
+                    soTimeout = 15_000
+                    tcpNoDelay = true
+                }
+            } catch (e: Throwable) {
+                Log.w(TAG, "listen connect failed", e)
+                failTransfer(id, "连接失败：${e.message}", LanProtocol.KIND_LISTEN)
+                return@launch
             }
-            sendPayload(id, peer, track, header, thresholdMb = Int.MAX_VALUE) { done, total ->
-                // 一起听不做阈值压缩：歌曲要即时播放，压缩/解压反而拖慢接入
-                updateTransfer(id) { it.copy(done = done, total = total) }
+            try {
+                val out = socket.getOutputStream()
+                val input = socket.getInputStream()
+                // 1) 邀请头（UTF-8 JSON）
+                val queueArr = JSONArray().apply {
+                    queue.forEach { m ->
+                        put(JSONObject().apply {
+                            put("title", m.title)
+                            put("artist", m.artist)
+                            put("lyric", m.lyric ?: "")
+                            put("dur", m.durMs)
+                        })
+                    }
+                }
+                val sizesArr = JSONArray().apply { sizes.forEach { put(it) } }
+                val header = JSONObject().apply {
+                    put("kind", LanProtocol.KIND_LISTEN)
+                    put("id", id)
+                    put("from", myName)
+                    put("count", tracks.size)
+                    put("queue", queueArr)
+                    put("sizes", sizesArr)
+                }
+                LanTransfer.writeLine(out, header.toString())
+                val reply = LanTransfer.readHeaderLine(input)
+                if (reply != LanProtocol.REPLY_OK) {
+                    finishTransfer(id, false, "对方拒绝了一起听")
+                    return@launch
+                }
+                leaderSession = LeaderSession(peer, socket, out)
+                // 2) 顺序推 N 个文件
+                var cumulative = 0L
+                tracks.forEachIndexed { i, t ->
+                    val size = sizes[i]
+                    LanTransfer.writeLine(out, size.toString())
+                    val src = resolver.openInputStream(t.uri)
+                    if (src == null || size <= 0) {
+                        failTransfer(id, "读取歌曲失败：${t.title}", LanProtocol.KIND_LISTEN)
+                        return@launch
+                    }
+                    val base = cumulative
+                    val ok = LanTransfer.copyWithProgress(src, out, size) { done ->
+                        updateTransfer(id) { it.copy(done = base + done, total = total) }
+                    }
+                    if (!ok) {
+                        failTransfer(id, "传输中断", LanProtocol.KIND_LISTEN)
+                        return@launch
+                    }
+                    cumulative += size
+                }
+                finishTransfer(id, true, "已建立一起听，正在同步…")
+                // 3) 连接保持打开：控制命令由 sendListenState 继续写入
+            } catch (e: Throwable) {
+                Log.w(TAG, "pushListenSession error", e)
+                failTransfer(id, e.message ?: "发送失败", LanProtocol.KIND_LISTEN)
+                runCatching { socket.close() }
+                leaderSession = null
             }
         }
     }
@@ -260,14 +370,11 @@ object LanManager {
             when (kind) {
                 LanProtocol.KIND_SONG ->
                     _pendingSongOffer.value = LanEvent.SongOffer(id, peer, name, size, compressed)
-                LanProtocol.KIND_LISTEN ->
-                    _pendingListenOffer.value = LanEvent.ListenOffer(
-                        transferId = id,
-                        peer = peer,
-                        title = header.optString("title").ifEmpty { name },
-                        artist = header.optString("artist"),
-                        lyric = header.optString("lyric").takeIf { it.isNotBlank() },
-                    )
+                LanProtocol.KIND_LISTEN -> {
+                    // 一起听：整段会话（邀请 → 一次接受 → 收 N 文件 → 持续控制）在此处理
+                    handleListenSession(conn, header, id, from)
+                    return
+                }
                 else -> {
                     LanTransfer.writeLine(out, LanProtocol.REPLY_NO)
                     return
@@ -308,10 +415,8 @@ object LanManager {
                     if (saved == null) throw IOException("写入媒体库失败")
                     message = saved
                 } else {
-                    val staged = stageListenTogether(app, id, name, tmp, compressed)
-                        ?: throw IOException("缓存写入失败")
-                    stagedListen[id] = staged
-                    message = "已接收，可以开始一起听"
+                    // 一起听改走持久会话（handleListenSession），单文件通道不再承载
+                    throw IOException("不支持的传输类型")
                 }
             } catch (e: Throwable) {
                 Log.w(TAG, "receive failed", e)
@@ -350,10 +455,172 @@ object LanManager {
         }
     }
 
-    /** 一起听：取出已落盘的缓存文件（播完即删由退出逻辑负责） */
-    fun takeStagedListenFile(transferId: String): File? = stagedListen.remove(transferId)
+    /**
+     * 一起听（嘉宾侧整段会话）：展示一次性邀请 → 等接受 → 顺序收 N 个文件（按序缓存成临时歌单）
+     * → 接收成功后通知 UI 起播 → 连接保持打开，持续读取主播下发的控制命令（State/Stop）。
+     */
+    private suspend fun handleListenSession(
+        conn: Socket,
+        header: JSONObject,
+        id: String,
+        from: String,
+    ) {
+        val app = ctx ?: return
+        try {
+            conn.soTimeout = 15_000
+            val out = conn.getOutputStream()
+            val input = conn.getInputStream()
+            val count = header.optInt("count", 1).coerceAtLeast(1)
+            val queue = parseQueue(header.optJSONArray("queue"))
+            val sizesArr = header.optJSONArray("sizes")
+            val sizes = (0 until (sizesArr?.length() ?: 0)).map { sizesArr!!.optLong(it) }
+            val peer = LanPeer(id = "remote", name = from, host = conn.inetAddress.hostAddress ?: "")
+            _pendingListenOffer.value = LanEvent.ListenOffer(id, peer, count, queue)
 
-    // ---------------- 落盘 ----------------
+            // 等用户一次决定（90s 超时按拒绝）
+            val deferred = CompletableDeferred<Boolean>()
+            pending[id] = deferred
+            val accepted = withTimeoutOrNull(90_000) { deferred.await() } ?: false
+            pending.remove(id)
+            if (!accepted) {
+                LanTransfer.writeLine(out, LanProtocol.REPLY_NO)
+                _pendingListenOffer.value = null
+                return
+            }
+            LanTransfer.writeLine(out, LanProtocol.REPLY_OK)
+
+            // 顺序接收 N 个文件，按序缓存成临时歌单
+            val tmpDir = File(app.cacheDir, TMP_DIR).apply { mkdirs() }
+            val total = sizes.sumOf { if (it > 0) it else 0L }
+            val songs = mutableListOf<SharedSong>()
+            var ok = true
+            var message = ""
+            var cumulative = 0L
+            try {
+                conn.soTimeout = 60_000
+                repeat(count) { i ->
+                    val sizeLine = LanTransfer.readHeaderLine(input) ?: throw IOException("缺尺寸行")
+                    val size = sizeLine.toLongOrNull() ?: throw IOException("尺寸非法")
+                    val tmp = File(tmpDir, "recv_${id}_$i.bin")
+                    val base = cumulative
+                    val got = LanTransfer.copyWithProgress(input, FileOutputStream(tmp), size) { done ->
+                        updateTransfer(id) { it.copy(done = base + done, total = total) }
+                    }
+                    if (!got) throw IOException("文件不完整")
+                    val meta = queue.getOrNull(i) ?: SharedMeta("曲目${i + 1}", "", null, 0L)
+                    val staged = stageListenFile(app, "${id}_$i", tmp) ?: throw IOException("缓存失败")
+                    songs += SharedSong(meta, staged)
+                    cumulative += size
+                }
+                _listenSongs.value = songs
+                message = "已接收 $count 首，开始一起听"
+                updateTransfer(id) { it.copy(finished = true, ok = true, message = message, done = total) }
+            } catch (e: Throwable) {
+                Log.w(TAG, "listen recv failed", e)
+                ok = false
+                message = e.message ?: "接收失败"
+                updateTransfer(id) { it.copy(finished = true, ok = false, message = message) }
+            }
+            _pendingListenOffer.value = null
+            _events.tryEmit(
+                LanEvent.Done(id, ok, message, kind = LanProtocol.KIND_LISTEN, sending = false)
+            )
+
+            // 连接保持打开：持续读取主播下发的控制命令直到断开
+            if (ok) {
+                try {
+                    while (true) {
+                        val line = LanTransfer.readHeaderLine(input, 1 shl 16) ?: break
+                        val cmd = LanJson.parse(line) ?: break
+                        when (cmd.optString("t")) {
+                            LanProtocol.CTRL_STOP -> {
+                                _controlCommands.tryEmit(LanControlCommand.Stop)
+                                break
+                            }
+                            LanProtocol.CTRL_STATE -> {
+                                _controlCommands.tryEmit(
+                                    LanControlCommand.State(
+                                        idx = cmd.optInt("idx", 0),
+                                        pos = cmd.optLong("pos", 0L),
+                                        playing = cmd.optBoolean("playing", true),
+                                    )
+                                )
+                            }
+                        }
+                    }
+                } catch (_: Throwable) { /* 连接断开 */ }
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "handleListenSession error", e)
+        }
+    }
+
+    /** 解析歌单 JSON 数组为 [SharedMeta] 列表 */
+    private fun parseQueue(arr: org.json.JSONArray?): List<SharedMeta> {
+        if (arr == null) return emptyList()
+        val list = mutableListOf<SharedMeta>()
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            list += SharedMeta(
+                title = o.optString("title").ifEmpty { "曲目${i + 1}" },
+                artist = o.optString("artist"),
+                lyric = o.optString("lyric").takeIf { it.isNotBlank() },
+                durMs = o.optLong("dur", 0L),
+            )
+        }
+        return list
+    }
+
+    /** 一起听文件落缓存目录（按 key 命名，退出一起听整体删除） */
+    private fun stageListenFile(app: Context, key: String, tmp: File): File? {
+        val dir = File(app.cacheDir, LISTEN_DIR).apply { mkdirs() }
+        val dest = File(dir, "$key.mp3")
+        if (!tmp.renameTo(dest)) {
+            tmp.inputStream().use { i ->
+                FileOutputStream(dest).use { o -> i.copyTo(o, 64 * 1024) }
+            }
+            tmp.delete()
+        }
+        return dest
+    }
+
+    /** 主播下发一次状态同步（嘉宾据此对齐 idx/pos/playing） */
+    fun sendListenState(idx: Int, pos: Long, playing: Boolean) {
+        val s = leaderSession ?: return
+        try {
+            s.out?.let {
+                LanTransfer.writeLine(
+                    it,
+                    JSONObject().apply {
+                        put("t", LanProtocol.CTRL_STATE)
+                        put("idx", idx)
+                        put("pos", pos)
+                        put("playing", playing)
+                    }.toString()
+                )
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "sendListenState failed", e)
+        }
+    }
+
+    /** 主播结束一起听：下发 Stop 并关闭控制连接 */
+    fun endListenSession() {
+        val s = leaderSession ?: return
+        try {
+            s.out?.let {
+                LanTransfer.writeLine(it, JSONObject().put("t", LanProtocol.CTRL_STOP).toString())
+            }
+        } catch (_: Throwable) {
+        }
+        runCatching { s.socket?.close() }
+        leaderSession = null
+    }
+
+    /** 嘉宾端取已落盘、按序排列的临时歌单 */
+    fun getListenSongs(): List<SharedSong> = _listenSongs.value
+
+    // ---------------- 落盘（传歌） ----------------
 
     /** 保存到公共音乐目录：API 29+ 走 MediaStore RELATIVE_PATH；以下直接插行写文件 */
     private fun saveToMediaStore(app: Context, src: File, displayName: String): String? {
@@ -385,29 +652,6 @@ object LanManager {
             runCatching { resolver.delete(uri, null, null) }
             null
         }
-    }
-
-    /** 一起听文件落缓存目录（按传输 id 命名，退出一起听整体删除） */
-    private fun stageListenTogether(
-        app: Context,
-        id: String,
-        name: String,
-        tmp: File,
-        compressed: Boolean,
-    ): File? {
-        val dir = File(app.cacheDir, LISTEN_DIR).apply { mkdirs() }
-        val ext = name.substringAfterLast('.', "mp3")
-        val dest = File(dir, "$id.$ext")
-        val payload = if (compressed) {
-            LanTransfer.unzipFirstEntry(tmp, File(app.cacheDir, "$TMP_DIR/unz_$id")) ?: return null
-        } else tmp
-        if (!payload.renameTo(dest)) {
-            payload.inputStream().use { i ->
-                FileOutputStream(dest).use { o -> i.copyTo(o, 64 * 1024) }
-            }
-            payload.delete()
-        }
-        return dest
     }
 
     private fun mimeFromName(name: String): String = when (name.substringAfterLast('.', "").lowercase()) {

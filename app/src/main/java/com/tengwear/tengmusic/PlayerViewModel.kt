@@ -14,6 +14,8 @@ import androidx.media3.session.SessionToken
 import coil.Coil
 import coil.request.ImageRequest
 import com.google.common.util.concurrent.MoreExecutors
+import com.tengwear.tengmusic.lan.LanManager
+import com.tengwear.tengmusic.lan.LanPeer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -500,48 +502,148 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------------- 一起听（局域网）API ----------------
 
-    /**
-     * 播放「一起听」推送来的歌曲：文件在缓存目录（不落媒体库），
-     * 歌词由推送方一并提供。进入 sharedMode 后 poll 暂停本地曲目同步。
-     * controller 未就绪时缓存意图，连接后自动补播。
-     */
-    fun playSharedSong(file: java.io.File, title: String, artist: String, lyricText: String?) {
-        val uri = Uri.fromFile(file)
-        val item = MediaItem.fromUri(uri)
-        val play: () -> Unit = {
-            controller?.let { c ->
-                c.setMediaItems(listOf(item))
-                c.seekToDefaultPosition(0)
-                c.play()
-            }
-        }
-        if (controller == null) pendingPlay = play else play()
+    /** 一起听临时歌单：主播=选中的本地队列；嘉宾=对端推来、已落盘的对齐队列 */
+    private val _listenQueue = MutableStateFlow<List<Track>>(emptyList())
+    val listenQueue: StateFlow<List<Track>> = _listenQueue.asStateFlow()
 
+    /** 一起听当前曲目下标（与 [listenQueue] 严格对齐） */
+    private val _listenIndex = MutableStateFlow(0)
+    val listenIndex: StateFlow<Int> = _listenIndex.asStateFlow()
+
+    /** 主播周期下发状态的协程（退出时取消） */
+    private var listenTickJob: Job? = null
+
+    /** 嘉宾侧控制命令收集协程（只装一次） */
+    private var listenCommandJob: Job? = null
+
+    /**
+     * 主播：把选中歌曲组成临时歌单推给 [peer]，本地按同一顺序起播。
+     * 每首的歌词（同名 .lrc）逐个读出并随元信息下发 —— 解决嘉宾端「没有歌词」。
+     */
+    fun startListenSession(peer: LanPeer, tracks: List<Track>) {
+        if (tracks.isEmpty()) return
+        val lyrics = tracks.map { t ->
+            runCatching { lrcLinesToText(LyricsRepository.loadLyrics(getApplication(), t)) }
+                .getOrNull()?.takeIf { it.isNotBlank() }
+        }
+        LanManager.pushListenSession(peer, tracks, lyrics)
+        _listenQueue.value = tracks
+        _listenIndex.value = 0
+        _sharedMode.value = true
+        activeQueueIds = tracks.map { it.id }
+        controller?.let { c ->
+            c.setMediaItems(tracks.map { MediaItem.fromUri(it.uri) }, 0, 0L)
+            c.play()
+        }
+        startListenTick()
+    }
+
+    /** 嘉宾：接受邀请、收完整张歌单后，按主播顺序本地起播 */
+    fun startListenAsGuest() {
+        val songs = LanManager.getListenSongs()
+        if (songs.isEmpty()) return
+        val tracks = songs.map { s ->
+            Track(
+                id = -1L,
+                title = s.meta.title.ifBlank { s.file.name },
+                artist = s.meta.artist,
+                album = "一起听",
+                albumId = -1L,
+                duration = s.meta.durMs,
+                displayName = s.file.name,
+                uri = Uri.fromFile(s.file),
+            )
+        }
+        _listenQueue.value = tracks
+        _listenIndex.value = 0
         _sharedMode.value = true
         activeQueueIds = null
-        _currentIndex.value = -1
-        _currentTrack.value = Track(
-            id = -1L,
-            title = title.ifBlank { file.name },
-            artist = artist,
-            album = "一起听",
-            albumId = -1L,
-            duration = 0L,
-            displayName = file.name,
-            uri = uri,
-        )
-        _lyrics.value = lyricText?.let { runCatching { LrcParser.parse(it) }.getOrNull() } ?: emptyList()
+        controller?.let { c ->
+            c.setMediaItems(tracks.map { MediaItem.fromUri(it.uri) }, 0, 0L)
+            c.play()
+        }
+        _lyrics.value = songs.firstOrNull()?.meta?.lyric?.let {
+            runCatching { LrcParser.parse(it) }.getOrNull()
+        } ?: emptyList()
         _lyricIndex.value = -1
-        _albumColor.value = null
-        recomputeLyricColor()
+        installListenCommandCollector()
     }
 
     /**
-     * 退出一起听：停止播放、删除缓存目录（不留残余文件），
-     * 当前曲目回到空态（下一次 poll 会按本地队列重新同步）。
+     * 主播：每秒下发 [idx, pos, playing]。嘉宾据此对齐（漂移 >800ms 才 seek，
+     * 避免网络抖动导致频繁跳转），切歌/暂停/继续全部由主播权威驱动。
+     */
+    private fun startListenTick() {
+        listenTickJob?.cancel()
+        listenTickJob = viewModelScope.launch {
+            while (_sharedMode.value) {
+                controller?.let { c ->
+                    val idx = c.currentMediaItemIndex
+                    LanManager.sendListenState(idx, c.currentPosition, c.isPlaying)
+                    if (idx != _listenIndex.value) {
+                        _listenIndex.value = idx
+                        val q = _listenQueue.value
+                        if (idx in q.indices) {
+                            _lyrics.value = runCatching {
+                                LyricsRepository.loadLyrics(getApplication(), q[idx])
+                            }.getOrNull() ?: emptyList()
+                            _lyricIndex.value = -1
+                        }
+                    }
+                }
+                delay(1000)
+            }
+        }
+    }
+
+    /** 嘉宾：接收主播下发的状态并镜像（切歌 / 对齐进度 / 播放暂停） */
+    private fun installListenCommandCollector() {
+        if (listenCommandJob != null) return
+        listenCommandJob = viewModelScope.launch {
+            LanManager.controlCommands.collect { cmd ->
+                when (cmd) {
+                    LanManager.LanControlCommand.Stop -> exitListenTogether()
+                    is LanManager.LanControlCommand.State -> {
+                        val c = controller ?: return@collect
+                        if (c.currentMediaItemIndex != cmd.idx && cmd.idx in 0 until c.mediaItemCount) {
+                            c.seekTo(cmd.idx, cmd.pos)
+                            _listenIndex.value = cmd.idx
+                            val q = _listenQueue.value
+                            if (cmd.idx in q.indices) {
+                                _lyrics.value = runCatching {
+                                    LyricsRepository.loadLyrics(getApplication(), q[cmd.idx])
+                                }.getOrNull() ?: emptyList()
+                                _lyricIndex.value = -1
+                            }
+                        } else if (kotlin.math.abs(c.currentPosition - cmd.pos) > 800L) {
+                            c.seekTo(cmd.pos)
+                        }
+                        if (cmd.playing && !c.isPlaying) c.play()
+                        if (!cmd.playing && c.isPlaying) c.pause()
+                    }
+                }
+            }
+        }
+    }
+
+    /** 把解析好的歌词还原成 LRC 原文（推送 / 缓存时随元信息走） */
+    private fun lrcLinesToText(lines: List<LrcLine>): String = lines.joinToString("\n") { line ->
+        val mm = line.timeMs / 60000
+        val ss = line.timeMs / 1000 % 60
+        val xx = line.timeMs / 10 % 100
+        String.format(java.util.Locale.US, "[%02d:%02d.%02d]%s", mm, ss, xx, line.text)
+    }
+
+    /**
+     * 退出一起听：通知对端、停播、清空临时歌单，删除缓存目录（不留残余）。
      */
     fun exitListenTogether() {
+        listenTickJob?.cancel(); listenTickJob = null
+        listenCommandJob?.cancel(); listenCommandJob = null
+        LanManager.endListenSession()
         _sharedMode.value = false
+        _listenQueue.value = emptyList()
+        _listenIndex.value = 0
         controller?.let { c ->
             c.stop()
             c.clearMediaItems()
@@ -552,7 +654,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         _lyricIndex.value = -1
         _albumColor.value = null
         recomputeLyricColor()
-        com.tengwear.tengmusic.lan.LanManager.clearListenTogether()
+        LanManager.clearListenTogether()
     }
 
     /** 重新扫描本地音乐（接收到传歌后调用，让新歌立刻出现在曲目/专辑列表） */

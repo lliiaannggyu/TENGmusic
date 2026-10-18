@@ -6,18 +6,28 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -50,48 +60,48 @@ private val LT_BG = Color(0xF20B0B0E)
 private val LT_CARD_SELECTED = Color(0x33B69DF8)
 
 /**
- * 局域网「一起听」页：
- *  - 发现同一 Wi-Fi 下运行本 App 的设备，把**当前播放的歌曲+歌词**直接推过去
- *  - 对方无需在本机拥有这首歌：字节走局域网落到缓存目录，退出即删（不留残余）
- *  - 对端推送过来时自动弹出询问卡：接受 → 收歌 → 直接起播；拒绝 → 不留文件
- *  - 自己在播推送歌时，显示「退出一起听」（退出即清缓存并停止）
+ * 局域网「一起听」。
+ *
+ * 主播：选设备 + 多选歌曲 → 组成**临时歌单**整张推给对端 → 双方按同一顺序播放；
+ * 之后主播的播放/暂停/切歌/进度每秒同步一次，嘉宾镜像（主播权威）。
+ * 嘉宾：收到一次邀请（显示首数与前三首）→ 接受 → 收完整张 → 自动按序起播。
+ *
+ * 文件只落对方缓存目录，退出即删，不污染对方媒体库。
  */
 @Composable
 fun ListenTogetherScreen(vm: PlayerViewModel, onClose: () -> Unit) {
     val peers by LanManager.peers.collectAsState()
     val transfers by LanManager.transfers.collectAsState()
     val sharedMode by vm.sharedMode.collectAsState()
+    val queue by vm.listenQueue.collectAsState()
+    val listenIndex by vm.listenIndex.collectAsState()
+    val tracks by vm.tracks.collectAsState()
+    val isPlaying by vm.isPlaying.collectAsState()
+    val position by vm.position.collectAsState()
     val currentTrack by vm.currentTrack.collectAsState()
-    val incomingOffer by LanManager.pendingListenOffer.collectAsState()
+    val offer by LanManager.pendingListenOffer.collectAsState()
+
     val listState = rememberScalingLazyListState()
     val focusRequester = rememberRotaryFocusRequester()
 
     var selectedPeerId by remember { mutableStateOf<String?>(null) }
     var statusMsg by remember { mutableStateOf<String?>(null) }
+    // 多选：按点击顺序保存曲目 id（顺序即推送顺序）
+    val picked = remember { mutableStateListOf<Long>() }
 
-    // 全局事件：推送结果的接收侧起播 / 失败提示
     LaunchedEffect(Unit) {
         LanManager.events.collect { ev ->
-            when (ev) {
-                is LanEvent.Done -> {
-                    if (ev.kind == LanProtocol.KIND_LISTEN && !ev.sending) {
-                        if (ev.ok) {
-                            val file = LanManager.takeStagedListenFile(ev.transferId)
-                            if (file != null) {
-                                vm.playSharedSong(file, ev.title, ev.artist, ev.lyric)
-                                statusMsg = null
-                            } else {
-                                statusMsg = "缓存文件缺失"
-                            }
-                        } else {
-                            statusMsg = "接收失败：${ev.message}"
-                        }
-                    } else if (!ev.ok) {
-                        statusMsg = "发送失败：${ev.message}"
+            if (ev is LanEvent.Done && ev.kind == LanProtocol.KIND_LISTEN) {
+                if (!ev.sending) {
+                    if (ev.ok) {
+                        vm.startListenAsGuest()
+                        statusMsg = null
+                    } else {
+                        statusMsg = "接收失败：${ev.message}"
                     }
-                    LanManager.dismissTransfer(ev.transferId)
+                } else if (!ev.ok) {
+                    statusMsg = "发送失败：${ev.message}"
                 }
-                else -> {}
             }
         }
     }
@@ -127,7 +137,7 @@ fun ListenTogetherScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                     }
                 }
 
-                // ========== 正在一起听（播放推送歌）==========
+                // ============ 正在一起听（会话中）============
                 if (sharedMode) {
                     item {
                         Card(
@@ -142,18 +152,79 @@ fun ListenTogetherScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                             ),
                         ) {
                             WearText("正在一起听", fontSize = 11.sp, color = LT_ACCENT)
-                            currentTrack?.let { t ->
+                            val t = currentTrack
+                            WearText(
+                                if (t != null) "《${t.title}》" else "未在播放",
+                                fontSize = 10.sp,
+                                color = Color.White,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            if (t != null && t.artist.isNotBlank()) {
+                                WearText(t.artist, fontSize = 8.sp, color = Color.Gray, maxLines = 1)
+                            }
+                            if (queue.isNotEmpty()) {
                                 WearText(
-                                    "《${t.title}》",
-                                    fontSize = 10.sp,
-                                    color = Color.White,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
+                                    "${(listenIndex + 1).coerceAtMost(queue.size)}/${queue.size}" +
+                                        " · ${fmt(position)}",
+                                    fontSize = 8.sp,
+                                    color = Color.Gray,
                                 )
-                                if (t.artist.isNotBlank()) {
-                                    WearText(t.artist, fontSize = 9.sp, color = Color.Gray, maxLines = 1)
+                                // 细进度条（当前曲目播放位置）
+                                val dur = t?.duration ?: 0L
+                                val frac = if (dur > 0L) {
+                                    (position.toFloat() / dur).coerceIn(0f, 1f)
+                                } else {
+                                    0f
+                                }
+                                Box(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .height(3.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(0x33FFFFFF))
+                                ) {
+                                    Box(
+                                        Modifier
+                                            .fillMaxWidth(frac)
+                                            .height(3.dp)
+                                            .clip(CircleShape)
+                                            .background(LT_ACCENT)
+                                    )
                                 }
                             }
+                            Spacer(Modifier.height(4.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceEvenly,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.SkipPrevious,
+                                    contentDescription = "上一首",
+                                    tint = Color.White,
+                                    modifier = Modifier
+                                        .size(22.dp)
+                                        .clickable { vm.prev() }
+                                )
+                                Icon(
+                                    imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                                    contentDescription = if (isPlaying) "暂停" else "播放",
+                                    tint = LT_ACCENT,
+                                    modifier = Modifier
+                                        .size(30.dp)
+                                        .clickable { vm.togglePlay() }
+                                )
+                                Icon(
+                                    imageVector = Icons.Filled.SkipNext,
+                                    contentDescription = "下一首",
+                                    tint = Color.White,
+                                    modifier = Modifier
+                                        .size(22.dp)
+                                        .clickable { vm.next() }
+                                )
+                            }
+                            Spacer(Modifier.height(4.dp))
                             Button(
                                 onClick = { vm.exitListenTogether() },
                                 modifier = Modifier.fillMaxWidth(),
@@ -167,7 +238,7 @@ fun ListenTogetherScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                     }
                     item {
                         WearText(
-                            "退出后不保留缓存文件",
+                            "切歌 / 暂停 / 进度实时同步\n退出后不保留缓存文件",
                             fontSize = 8.sp,
                             color = Color.Gray,
                             textAlign = TextAlign.Center
@@ -175,10 +246,11 @@ fun ListenTogetherScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                     }
                 }
 
-                // ========== 收到的推送（待决定）==========
-                val offer = incomingOffer
-                if (offer != null) {
-                    val receiving = transfers.any { it.id == offer.transferId && !it.finished }
+                // ============ 收到邀请 ============
+                val inv = offer
+                if (inv != null) {
+                    val xfer = transfers.firstOrNull { it.id == inv.transferId }
+                    val receiving = xfer != null && !xfer.finished
                     item {
                         Card(
                             onClick = {},
@@ -193,30 +265,53 @@ fun ListenTogetherScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                         ) {
                             WearText("一起听邀请", fontSize = 11.sp, color = LT_ACCENT)
                             WearText(
-                                "${offer.peer.name} 想和你一起听：",
+                                "${inv.peer.name} 邀请你听 ${inv.count} 首",
                                 fontSize = 9.sp,
                                 color = Color.Gray
                             )
-                            WearText(
-                                "《${offer.title}》",
-                                fontSize = 10.sp,
-                                color = Color.White,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            if (offer.artist.isNotBlank()) {
-                                WearText(offer.artist, fontSize = 8.sp, color = Color.Gray, maxLines = 1)
+                            inv.queue.take(3).forEach { m ->
+                                WearText(
+                                    "· ${m.title}",
+                                    fontSize = 9.sp,
+                                    color = Color.White,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
                             }
+                            if (inv.count > 3) {
+                                WearText("…共 ${inv.count} 首", fontSize = 8.sp, color = Color.Gray)
+                            }
+                            Spacer(Modifier.height(4.dp))
                             if (receiving) {
-                                WearText("正在接收…", fontSize = 10.sp, color = LT_ACCENT)
+                                val f = xfer?.fraction
+                                WearText(
+                                    if (f != null) "接收中 ${(f * 100).toInt()}%" else "接收中…",
+                                    fontSize = 10.sp,
+                                    color = LT_ACCENT
+                                )
+                                Box(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .height(3.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(0x33FFFFFF))
+                                ) {
+                                    Box(
+                                        Modifier
+                                            .fillMaxWidth(f ?: 0f)
+                                            .height(3.dp)
+                                            .clip(CircleShape)
+                                            .background(LT_ACCENT)
+                                    )
+                                }
                             } else {
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Button(
-                                        onClick = { LanManager.respondOffer(offer.transferId, true) }
+                                        onClick = { LanManager.respondOffer(inv.transferId, true) }
                                     ) { WearText("接受", fontSize = 10.sp) }
                                     Button(
                                         onClick = {
-                                            LanManager.respondOffer(offer.transferId, false)
+                                            LanManager.respondOffer(inv.transferId, false)
                                             statusMsg = "已拒绝"
                                         },
                                         colors = ButtonDefaults.buttonColors(
@@ -229,8 +324,8 @@ fun ListenTogetherScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                     }
                 }
 
-                // ========== 推送当前歌曲（非一起听状态）==========
-                if (!sharedMode) {
+                // ============ 发起一起听：选设备 + 多选歌 ============
+                if (!sharedMode && inv == null) {
                     item { ListHeader { WearText("附近设备", fontSize = 11.sp) } }
                     if (peers.isEmpty()) {
                         item {
@@ -265,41 +360,91 @@ fun ListenTogetherScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                         }
                     }
 
-                    item { ListHeader { WearText("推送当前歌曲", fontSize = 11.sp) } }
+                    item {
+                        ListHeader {
+                            WearText(
+                                "选歌（已选 ${picked.size} 首，按点击顺序）",
+                                fontSize = 11.sp
+                            )
+                        }
+                    }
+                    scalingItems(tracks) { t ->
+                        val on = picked.contains(t.id)
+                        Card(
+                            onClick = {
+                                if (on) picked.remove(t.id) else picked.add(t.id)
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(percent = 50),
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (on) LT_CARD_SELECTED else LT_BG,
+                                contentColor = Color.White,
+                                titleColor = if (on) LT_ACCENT else Color.White,
+                                subtitleColor = Color.Gray,
+                            ),
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = if (on) Icons.Filled.Check else Icons.Filled.Close,
+                                    contentDescription = null,
+                                    tint = if (on) LT_ACCENT else Color(0x44FFFFFF),
+                                    modifier = Modifier.size(14.dp),
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    WearText(
+                                        t.title,
+                                        fontSize = 10.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    WearText(
+                                        t.artist,
+                                        fontSize = 8.sp,
+                                        color = Color.Gray,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                if (on) {
+                                    WearText(
+                                        "${picked.indexOf(t.id) + 1}",
+                                        fontSize = 9.sp,
+                                        color = LT_ACCENT
+                                    )
+                                }
+                            }
+                        }
+                    }
+
                     item {
                         Column(
                             Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 12.dp),
+                                .padding(horizontal = 12.dp, vertical = 4.dp),
                             horizontalAlignment = Alignment.CenterHorizontally,
                         ) {
-                            val t = currentTrack
-                            WearText(
-                                if (t != null) "将推送《${t.title}》" else "请先播放一首歌",
-                                fontSize = 9.sp,
-                                color = if (t != null) Color.White else Color.Gray,
-                                textAlign = TextAlign.Center,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
                             Button(
                                 onClick = {
                                     val peer = peers.find { it.id == selectedPeerId }
-                                    val track = currentTrack
-                                    if (peer != null && track != null) {
-                                        LanManager.pushListen(
-                                            peer, track, vm.currentLyricTextForPush()
-                                        )
-                                        statusMsg = "已推送给 ${peer.name}，等待对方接受…"
+                                    val sel = picked.toList().mapNotNull { id ->
+                                        tracks.find { it.id == id }
+                                    }
+                                    if (peer != null && sel.isNotEmpty()) {
+                                        vm.startListenSession(peer, sel)
+                                        statusMsg = "已邀请 ${peer.name}，等待接受…"
                                     }
                                 },
-                                enabled = selectedPeerId != null && currentTrack != null,
+                                enabled = selectedPeerId != null && picked.isNotEmpty(),
                                 modifier = Modifier.fillMaxWidth(),
                             ) {
-                                WearText("推送并一起听", fontSize = 11.sp)
+                                WearText(
+                                    if (picked.isEmpty()) "开始一起听" else "开始一起听（${picked.size} 首）",
+                                    fontSize = 11.sp
+                                )
                             }
                             WearText(
-                                "歌曲与歌词一起推送\n对方无需拥有这首歌",
+                                "只推送选中的歌，组成临时歌单\n双方按同一顺序播放",
                                 fontSize = 8.sp,
                                 color = Color.Gray,
                                 textAlign = TextAlign.Center
@@ -308,12 +453,7 @@ fun ListenTogetherScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                     }
                 }
 
-                // ========== 传输进度 / 结果 ==========
-                if (transfers.isNotEmpty()) {
-                    transferList(transfers)
-                }
-
-                // ========== 状态 ==========
+                // 状态提示
                 val msg = statusMsg
                 if (msg != null) {
                     item {
@@ -337,4 +477,10 @@ fun ListenTogetherScreen(vm: PlayerViewModel, onClose: () -> Unit) {
             }
         }
     }
+}
+
+/** 毫秒 → m:ss */
+private fun fmt(ms: Long): String {
+    val s = (ms / 1000).coerceAtLeast(0)
+    return "%d:%02d".format(s / 60, s % 60)
 }

@@ -36,7 +36,19 @@ object LanProtocol {
 
     const val REPLY_OK = "OK"
     const val REPLY_NO = "NO"
+
+    /** 一起听控制命令类型（会话连接上后续行的 JSON 字段 t） */
+    const val CTRL_STATE = "state"   // 周期 tick / 事件：{idx,pos,playing}（嘉宾据此对齐）
+    const val CTRL_STOP = "stop"     // 主播结束会话：嘉宾退出一起听
 }
+
+/** 一起听歌单里的一首（主播推送、嘉宾缓存时一并携带元信息） */
+data class SharedMeta(
+    val title: String,
+    val artist: String,
+    val lyric: String?,
+    val durMs: Long,
+)
 
 /** 一个被发现的对端设备 */
 data class LanPeer(
@@ -75,13 +87,12 @@ sealed interface LanEvent {
         val compressed: Boolean,
     ) : LanEvent
 
-    /** 对端想和你一起听（推送当前歌+歌词，待决定） */
+    /** 对端想和你一起听（一次性邀请：含整张临时歌单，待决定） */
     data class ListenOffer(
         val transferId: String,
         val peer: LanPeer,
-        val title: String,
-        val artist: String,
-        val lyric: String?,
+        val count: Int,
+        val queue: List<SharedMeta>,
     ) : LanEvent
 
     /** 传输进度 */

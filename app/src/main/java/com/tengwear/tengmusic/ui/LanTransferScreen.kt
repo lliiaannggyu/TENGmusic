@@ -16,6 +16,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -69,7 +70,8 @@ fun LanTransferScreen(vm: PlayerViewModel, onClose: () -> Unit) {
     val focusRequester = rememberRotaryFocusRequester()
 
     var selectedPeerId by remember { mutableStateOf<String?>(null) }
-    var selectedTrack by remember { mutableStateOf<Int?>(null) }
+    // 多选曲目 id，按点击顺序（即发送顺序）
+    val picked = remember { mutableStateListOf<Long>() }
     var statusMsg by remember { mutableStateOf<String?>(null) }
 
     // 传入的传歌请求（StateFlow：WearApp 可能是收到它才打开本页，用状态不会丢）
@@ -219,9 +221,9 @@ fun LanTransferScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                     }
                 }
                 scalingItemsIndexed(tracks) { i, t ->
-                    val selected = i == selectedTrack
+                    val selected = picked.contains(t.id)
                     Card(
-                        onClick = { selectedTrack = i },
+                        onClick = { if (selected) picked.remove(t.id) else picked.add(t.id) },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(percent = 50),
                         colors = CardDefaults.cardColors(
@@ -232,7 +234,7 @@ fun LanTransferScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                         ),
                     ) {
                         WearText(
-                            t.title + if (selected) " ✓" else "",
+                            (if (selected) "${picked.indexOf(t.id) + 1}. " else "") + t.title,
                             fontSize = 11.sp,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
@@ -252,17 +254,23 @@ fun LanTransferScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                         Button(
                             onClick = {
                                 val peer = peers.find { it.id == selectedPeerId }
-                                val t = tracks.getOrNull(selectedTrack ?: -1)
-                                if (peer != null && t != null) {
-                                    LanManager.sendSong(peer, t, thresholdMb)
-                                    selectedTrack = null
-                                    statusMsg = "正在发送《${t.title}》给 ${peer.name}…"
+                                val sel = picked.toList().mapNotNull { id ->
+                                    tracks.find { it.id == id }
+                                }
+                                if (peer != null && sel.isNotEmpty()) {
+                                    // 逐首排队发送（每首独立确认/独立进度）
+                                    sel.forEach { LanManager.sendSong(peer, it, thresholdMb) }
+                                    statusMsg = "正在发送 ${sel.size} 首给 ${peer.name}…"
+                                    picked.clear()
                                 }
                             },
-                            enabled = selectedPeerId != null && selectedTrack != null,
+                            enabled = selectedPeerId != null && picked.isNotEmpty(),
                             modifier = Modifier.fillMaxWidth(),
                         ) {
-                            WearText("发送", fontSize = 12.sp)
+                            WearText(
+                                if (picked.isEmpty()) "发送" else "发送（${picked.size} 首）",
+                                fontSize = 12.sp
+                            )
                         }
                         WearText(
                             "超过 $thresholdMb MB 的文件会先压缩再传",
