@@ -358,51 +358,109 @@ fun WearPlayerScreen(
                         customItem(
                             buttonGroupContent = {
                                 if (progressStyle == SettingsRepository.PROGRESS_STYLE_WAVY) {
-                                    // 波浪环围绕播放键：官方构件内部固定 48dp 画布，用
-                                    // graphicsLayer 等比放大到环径；描边/波长/间隙按官方
-                                    // token 比例同步缩放；rotate(-90) 使进度从 12 点顺时针扫。
-                                    val ringDiam: Dp = playSize * 1.28f
-                                    val ringScale =
-                                        ringDiam / WavyProgressIndicatorDefaults.CircularContainerSize
-                                    // 围绕按钮的小环用更细的线（上限 4dp），避免糊成一团
+                                    // 双波浪环围绕播放键（参考图形态）——全部由官方
+                                    // CircularWavyProgressIndicator 叠加而成：
+                                    // 官方组件的轨道（track）永远是平滑圆，但「满进度 +
+                                    // 满振幅」的指示器本身就是一朵完整的波浪花环
+                                    // （内部 star morph：半径 25% 的瓣浪），因此：
+                                    //   ① 外环·深色波浪轨道：progress=1 + amplitude=1 → 整圈波浪
+                                    //   ② 外环·进度弧：同半径同相位细线叠在①上，主题色，
+                                    //      12 点顺时针扫（gapSize=0 保证弧从正顶部起）
+                                    //   ③ 内环·浅色波浪环：progress=1 + amplitude=1 → 整圈波浪
+                                    // 振幅门控：播放拉满（波浪随官方 offset 动画流动），
+                                    // 暂停归零（官方 Increasing/DecreasingAmplitude 缓动平滑
+                                    // 退化为平滑圆环，且 offset 动画停止，省电）。
+                                    // 官方构件内部固定 48dp 画布，用 scale 等比放大到环径；
+                                    // 描边按画布比例换算，保证物理粗细即设定值；
+                                    // 波长/间隙用官方 token；rotate(-90) 使进度从 12 点起。
+                                    val outerDiam: Dp = playSize * 1.55f
+                                    val innerDiam: Dp = playSize * 1.35f
+                                    val outerScale =
+                                        outerDiam / WavyProgressIndicatorDefaults.CircularContainerSize
+                                    val innerScale =
+                                        innerDiam / WavyProgressIndicatorDefaults.CircularContainerSize
+                                    // 围绕按钮的环用更细的线（上限 4dp），避免糊成一团
                                     val wavyStrokeDp: Dp = ringStrokeDp.coerceAtMost(4.dp)
+                                    val waveAmplitude: (Float) -> Float = { if (isPlaying) 1f else 0f }
+                                    // Stroke.width 是 Float（像素）：Dp → px → 画布比例
+                                    val outerStrokePx = with(density) {
+                                        wavyStrokeDp.toPx()
+                                    } / outerScale
+                                    val arcStrokePx = with(density) {
+                                        (wavyStrokeDp * 0.8f).toPx()
+                                    } / outerScale
+                                    val innerStrokePx = with(density) {
+                                        (wavyStrokeDp * 0.8f).toPx()
+                                    } / innerScale
                                     Box(
                                         modifier = Modifier
-                                            .size(ringDiam)
+                                            .size(outerDiam)
                                             .animateWidth(playIS),
                                         contentAlignment = Alignment.Center,
                                     ) {
+                                        // ① 外环·深色波浪轨道（满进度满振幅 = 整圈波浪花环；
+                                        // 轨道置透明，避免平滑圆从瓣浪谷底透出）
+                                        CircularWavyProgressIndicator(
+                                            progress = { 1f },
+                                            modifier = Modifier
+                                                .align(Alignment.Center)
+                                                .scale(outerScale)
+                                                .rotate(-90f),
+                                            color = Color(0x3DFFFFFF),
+                                            trackColor = Color.Transparent,
+                                            stroke = Stroke(
+                                                width = outerStrokePx,
+                                                cap = StrokeCap.Round,
+                                            ),
+                                            trackStroke = Stroke(
+                                                width = outerStrokePx,
+                                                cap = StrokeCap.Round,
+                                            ),
+                                            amplitude = waveAmplitude,
+                                            wavelength = WavyProgressIndicatorDefaults.CircularWavelength,
+                                            gapSize = 0.dp,
+                                        )
+                                        // ② 外环·进度弧（同半径同相位叠加，细线内嵌）
                                         CircularWavyProgressIndicator(
                                             progress = { animatedProgress },
                                             modifier = Modifier
                                                 .align(Alignment.Center)
-                                                .scale(ringScale)
+                                                .scale(outerScale)
                                                 .rotate(-90f),
                                             color = themeColor,
-                                            trackColor = Color(0x22FFFFFF),
-                                            // Stroke.width 是 Float（像素）：Dp → px → 画布比例
+                                            trackColor = Color.Transparent,
                                             stroke = Stroke(
-                                                width = with(density) {
-                                                    wavyStrokeDp.toPx()
-                                                } / ringScale,
+                                                width = arcStrokePx,
                                                 cap = StrokeCap.Round,
                                             ),
                                             trackStroke = Stroke(
-                                                width = with(density) {
-                                                    wavyStrokeDp.toPx()
-                                                } / ringScale,
+                                                width = arcStrokePx,
                                                 cap = StrokeCap.Round,
                                             ),
-                                            // 官方默认振幅 ramp + 暂停门控：暂停归零 →
-                                            // 官方缓动平滑退化为圆环，播放才恢复流动
-                                            amplitude = { p ->
-                                                if (!isPlaying) 0f
-                                                else if (p <= 0.1f || p >= 0.95f) 0f
-                                                else 1f
-                                            },
+                                            amplitude = waveAmplitude,
                                             wavelength = WavyProgressIndicatorDefaults.CircularWavelength,
-                                            gapSize =
-                                                WavyProgressIndicatorDefaults.CircularIndicatorTrackGapSize,
+                                            gapSize = 0.dp,
+                                        )
+                                        // ③ 内环·浅色波浪环（整圈，轨道透明）
+                                        CircularWavyProgressIndicator(
+                                            progress = { 1f },
+                                            modifier = Modifier
+                                                .align(Alignment.Center)
+                                                .scale(innerScale)
+                                                .rotate(-90f),
+                                            color = Color(0x66FFFFFF),
+                                            trackColor = Color.Transparent,
+                                            stroke = Stroke(
+                                                width = innerStrokePx,
+                                                cap = StrokeCap.Round,
+                                            ),
+                                            trackStroke = Stroke(
+                                                width = innerStrokePx,
+                                                cap = StrokeCap.Round,
+                                            ),
+                                            amplitude = waveAmplitude,
+                                            wavelength = WavyProgressIndicatorDefaults.CircularWavelength,
+                                            gapSize = 0.dp,
                                         )
                                         PlayPauseButton(
                                             isPlaying = isPlaying,
