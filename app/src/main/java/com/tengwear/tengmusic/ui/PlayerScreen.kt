@@ -11,6 +11,8 @@ import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -40,7 +42,9 @@ import androidx.compose.material.icons.filled.VolumeDown
 import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.filled.LibraryMusic
+import androidx.compose.material3.ButtonGroup
 import androidx.compose.material3.CircularWavyProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.WavyProgressIndicatorDefaults
@@ -87,6 +91,7 @@ import com.tengwear.tengmusic.PlayMode
 import com.tengwear.tengmusic.PlayerViewModel
 import com.tengwear.tengmusic.SettingsRepository
 import kotlin.math.abs
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -105,6 +110,7 @@ private val CTRL_BG = Color(0xFF2A2A35)
  *    TimeText（系统时间）槽位会把内容盒压矮一截，若按内容盒计算，圆环会偏小、
  *    圆心偏下，离屏幕边缘留出一段明显间隙。
  */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun WearPlayerScreen(
     vm: PlayerViewModel,
@@ -225,7 +231,6 @@ fun WearPlayerScreen(
             val artistSp = (d.value * 0.026f).coerceIn(10f, 13f).sp
             val topPad: Dp = (d * 0.05f).coerceIn(14.dp, 24.dp)
             val smallGap: Dp = (d * 0.02f).coerceIn(4.dp, 10.dp)
-            val ctrlGap: Dp = (d * 0.04f).coerceIn(8.dp, 18.dp)
 
             // 圆形顶部/底部收窄补偿：越靠近圆的上下极点，可用宽度越窄。
             // 这里按经验比例给上下区域留出水平内边距，让内容不再贴边。
@@ -320,96 +325,125 @@ fun WearPlayerScreen(
                     Spacer(Modifier.weight(0.85f))
 
                     // ===== 中间：主控三键（播放键=圆形，切歌键=横向胶囊）=====
-                    // 波浪主题（样式 1）：官方波浪进度环围绕播放/暂停圆形按钮转动，
-                    // 完整一圈（播放键在屏幕中下部，无需避让顶部 TimeText）。
-                    Row(
+                    // 官方 M3E ButtonGroup：按压任一按钮时，被按的按钮变宽、
+                    // 相邻按钮被压缩推开（animateWidth + 官方 measure policy），
+                    // 即 Material 3 Expressive 的挤压动画，全部官方代码。
+                    // 三个按钮各自的 interactionSource：既驱动官方形状/ripple，
+                    // 又通过 animateWidth 注册到 ButtonGroup 的挤压动画。
+                    val prevIS = remember { MutableInteractionSource() }
+                    val playIS = remember { MutableInteractionSource() }
+                    val nextIS = remember { MutableInteractionSource() }
+                    ButtonGroup(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center,
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(
-                            // 波浪环比播放键大一圈，键距适当加宽，避免环线搭到切歌键
-                            if (progressStyle == SettingsRepository.PROGRESS_STYLE_WAVY) {
-                                d * 0.055f
-                            } else {
-                                ctrlGap
-                            }
-                        ),
+                        overflowIndicator = {},
                     ) {
-                        PrevNextButton(
-                            isPrev = true,
-                            size = sideSize,
-                            pill = true,
-                            onClickOnce = { vm.prev() },
-                            onSeekDelta = vm::seekBy,
-                            background = ctrlBg,
-                            iconColor = ctrlIcon,
+                        customItem(
+                            buttonGroupContent = {
+                                PrevNextButton(
+                                    isPrev = true,
+                                    size = sideSize,
+                                    pill = true,
+                                    onClickOnce = { vm.prev() },
+                                    onSeekDelta = vm::seekBy,
+                                    background = ctrlBg,
+                                    iconColor = ctrlIcon,
+                                    interactionSource = prevIS,
+                                    modifier = Modifier.animateWidth(prevIS),
+                                )
+                            },
+                            menuContent = {},
                         )
-                        if (progressStyle == SettingsRepository.PROGRESS_STYLE_WAVY) {
-                            // 波浪环围绕播放键：官方构件内部固定 48dp 画布，用
-                            // graphicsLayer 等比放大到环径；描边/波长/间隙按官方
-                            // token 比例同步缩放；rotate(-90) 使进度从 12 点顺时针扫。
-                            val ringDiam: Dp = playSize * 1.28f
-                            val ringScale =
-                                ringDiam / WavyProgressIndicatorDefaults.CircularContainerSize
-                            // 围绕按钮的小环用更细的线（上限 4dp），避免糊成一团
-                            val wavyStrokeDp: Dp = ringStrokeDp.coerceAtMost(4.dp)
-                            Box(
-                                modifier = Modifier.size(ringDiam),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                CircularWavyProgressIndicator(
-                                    progress = { animatedProgress },
-                                    modifier = Modifier
-                                        .align(Alignment.Center)
-                                        .scale(ringScale)
-                                        .rotate(-90f),
-                                    color = themeColor,
-                                    trackColor = Color(0x22FFFFFF),
-                                    // Stroke.width 是 Float（像素）：Dp → px → 画布比例
-                                    stroke = Stroke(
-                                        width = with(density) { wavyStrokeDp.toPx() } / ringScale,
-                                        cap = StrokeCap.Round,
-                                    ),
-                                    trackStroke = Stroke(
-                                        width = with(density) { wavyStrokeDp.toPx() } / ringScale,
-                                        cap = StrokeCap.Round,
-                                    ),
-                                    // 官方默认振幅 ramp + 暂停门控：暂停归零 →
-                                    // 官方缓动平滑退化为圆环，播放才恢复流动
-                                    amplitude = { p ->
-                                        if (!isPlaying) 0f
-                                        else if (p <= 0.1f || p >= 0.95f) 0f
-                                        else 1f
-                                    },
-                                    wavelength = WavyProgressIndicatorDefaults.CircularWavelength,
-                                    gapSize =
-                                        WavyProgressIndicatorDefaults.CircularIndicatorTrackGapSize,
+                        customItem(
+                            buttonGroupContent = {
+                                if (progressStyle == SettingsRepository.PROGRESS_STYLE_WAVY) {
+                                    // 波浪环围绕播放键：官方构件内部固定 48dp 画布，用
+                                    // graphicsLayer 等比放大到环径；描边/波长/间隙按官方
+                                    // token 比例同步缩放；rotate(-90) 使进度从 12 点顺时针扫。
+                                    val ringDiam: Dp = playSize * 1.28f
+                                    val ringScale =
+                                        ringDiam / WavyProgressIndicatorDefaults.CircularContainerSize
+                                    // 围绕按钮的小环用更细的线（上限 4dp），避免糊成一团
+                                    val wavyStrokeDp: Dp = ringStrokeDp.coerceAtMost(4.dp)
+                                    Box(
+                                        modifier = Modifier
+                                            .size(ringDiam)
+                                            .animateWidth(playIS),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        CircularWavyProgressIndicator(
+                                            progress = { animatedProgress },
+                                            modifier = Modifier
+                                                .align(Alignment.Center)
+                                                .scale(ringScale)
+                                                .rotate(-90f),
+                                            color = themeColor,
+                                            trackColor = Color(0x22FFFFFF),
+                                            // Stroke.width 是 Float（像素）：Dp → px → 画布比例
+                                            stroke = Stroke(
+                                                width = with(density) {
+                                                    wavyStrokeDp.toPx()
+                                                } / ringScale,
+                                                cap = StrokeCap.Round,
+                                            ),
+                                            trackStroke = Stroke(
+                                                width = with(density) {
+                                                    wavyStrokeDp.toPx()
+                                                } / ringScale,
+                                                cap = StrokeCap.Round,
+                                            ),
+                                            // 官方默认振幅 ramp + 暂停门控：暂停归零 →
+                                            // 官方缓动平滑退化为圆环，播放才恢复流动
+                                            amplitude = { p ->
+                                                if (!isPlaying) 0f
+                                                else if (p <= 0.1f || p >= 0.95f) 0f
+                                                else 1f
+                                            },
+                                            wavelength = WavyProgressIndicatorDefaults.CircularWavelength,
+                                            gapSize =
+                                                WavyProgressIndicatorDefaults.CircularIndicatorTrackGapSize,
+                                        )
+                                        PlayPauseButton(
+                                            isPlaying = isPlaying,
+                                            onToggle = vm::togglePlay,
+                                            size = playSize,
+                                            pill = false,
+                                            background = playBg,
+                                            iconColor = playIcon,
+                                            interactionSource = playIS,
+                                        )
+                                    }
+                                } else {
+                                    PlayPauseButton(
+                                        isPlaying = isPlaying,
+                                        onToggle = vm::togglePlay,
+                                        size = playSize,
+                                        pill = false,
+                                        background = playBg,
+                                        iconColor = playIcon,
+                                        interactionSource = playIS,
+                                        modifier = Modifier.animateWidth(playIS),
+                                    )
+                                }
+                            },
+                            menuContent = {},
+                        )
+                        customItem(
+                            buttonGroupContent = {
+                                PrevNextButton(
+                                    isPrev = false,
+                                    size = sideSize,
+                                    pill = true,
+                                    onClickOnce = { vm.next() },
+                                    onSeekDelta = vm::seekBy,
+                                    background = ctrlBg,
+                                    iconColor = ctrlIcon,
+                                    interactionSource = nextIS,
+                                    modifier = Modifier.animateWidth(nextIS),
                                 )
-                                PlayPauseButton(
-                                    isPlaying = isPlaying,
-                                    onToggle = vm::togglePlay,
-                                    size = playSize,
-                                    pill = false,
-                                    background = playBg,
-                                    iconColor = playIcon,
-                                )
-                            }
-                        } else {
-                            PlayPauseButton(
-                                isPlaying = isPlaying,
-                                onToggle = vm::togglePlay,
-                                size = playSize,
-                                pill = false,
-                                background = playBg,
-                                iconColor = playIcon,
-                            )
-                        }
-                        PrevNextButton(
-                            isPrev = false,
-                            size = sideSize,
-                            pill = true,
-                            onClickOnce = { vm.next() },
-                            onSeekDelta = vm::seekBy,
-                            background = ctrlBg,
-                            iconColor = ctrlIcon,
+                            },
+                            menuContent = {},
                         )
                     }
 
@@ -572,9 +606,10 @@ fun WearPlayerScreen(
 }
 
 /** 播放/暂停主按钮：M3E 官方 FilledIconButton（内置挤压动画）。
- * 官方挤压动画原理：shapes 的 shape（CornerFull 圆形）与 pressedShape
- * （CornerSmall 小圆角）在按压时由官方 rememberAnimatedShape + motion spec
- * 平滑插值——容器形状"方圆"渐变，即 M3E 的挤压效果，全部官方代码。
+ * 官方挤压动画原理：shapes 的 shape（圆形）与 pressedShape（小圆角）在按压时
+ * 由官方 rememberAnimatedShape + motion spec 平滑插值——容器形状"方圆"渐变；
+ * 同一 interactionSource 经 ButtonGroup 的 animateWidth 注册后，按压时还会把
+ * 相邻按钮挤开（官方 ButtonGroup measure policy），全部官方代码。
  * 注意：官方 clickable 自带 focusable，会抢走播放器根节点的表冠焦点，
  * 用 focusProperties { canFocus = false } 禁用后代获焦，表冠调节不受影响。 */
 @Composable
@@ -585,11 +620,14 @@ private fun PlayPauseButton(
     background: Color = ACCENT,
     iconColor: Color = Color.White,
     pill: Boolean = false,
+    interactionSource: MutableInteractionSource? = null,
+    modifier: Modifier = Modifier,
 ) {
     FilledIconButton(
         onClick = onToggle,
+        interactionSource = interactionSource,
         shapes = IconButtonDefaults.shapes(shape = RoundedCornerShape(percent = 50)),
-        modifier = Modifier
+        modifier = modifier
             .size(if (pill) size * 1.6f else size)
             .focusProperties { canFocus = false },
         colors = IconButtonDefaults.filledIconButtonColors(
@@ -607,9 +645,12 @@ private fun PlayPauseButton(
 }
 
 /** 上一首 / 下一首：短按切歌；长按连续快进/快退，松手即停且不再触发切歌。
- * 容器为 M3E 官方 FilledIconButton（内置挤压动画，同播放键）；
- * 官方 clickable 的 onClick 置空，点击/长按全部由下方 onPress 手势接管
- * （避免与官方点击双触发），focusProperties 禁用获焦保住表冠焦点。 */
+ * 容器为 M3E 官方 FilledIconButton（官方 ripple + 形状挤压动画）；
+ * 交互全部走官方通道——短按切歌由官方 onClick 触发，长按 seek 由官方
+ * interactionSource 的 Press/Release/Cancel 事件驱动（不再自挂 pointerInput：
+ * v1.26 曾因外层 detectTapGestures 与官方 clickable 的 awaitFirstDown 竞争，
+ * 导致 down 被内层消费后外层手势饿死，切歌与调进度全部失效）。
+ * focusProperties 禁用获焦保住表冠焦点。 */
 @Composable
 private fun PrevNextButton(
     isPrev: Boolean,
@@ -619,46 +660,49 @@ private fun PrevNextButton(
     background: Color = CTRL_BG,
     iconColor: Color = Color.White,
     pill: Boolean = false,
+    interactionSource: MutableInteractionSource = remember { MutableInteractionSource() },
+    modifier: Modifier = Modifier,
 ) {
     val scope = rememberCoroutineScope()
     // 胶囊态刻意拉宽（宽 > 高），形成横向长条胶囊；圆形态保持正方形
     val boxW = if (pill) size * 1.32f else size
-    FilledIconButton(
-        // 点击/长按由下方 onPress 全权处理，防止与官方 clickable 双触发
-        onClick = {},
-        shapes = IconButtonDefaults.shapes(shape = RoundedCornerShape(percent = 50)),
-        modifier = Modifier
-            .size(boxW, size)
-            .focusProperties { canFocus = false }
-            .pointerInput(Unit) {
-                detectTapGestures(
-                    onPress = {
-                        // v1.25 修复「长按快进松手后失控」：旧写法在 onPress 作用域
-                        // 内外各调一次 tryAwaitRelease()，且外层 timer.cancel() 与
-                        // 内层 job.cancel() 存在竞态——外层先取消时，内层
-                        // while(true) 的连续 seek 循环永远不退出，表现为松手后进度
-                        // 狂奔、跳下一首、继续快进根本停不下来。
-                        // 新写法：tryAwaitRelease() 全程只调一次（它就是松手信号），
-                        // 连续 seek 收敛到同一个协程，松手后由本协程 cancel 它，
-                        // 从结构上杜绝竞态；短按判定改用 longPressed 标志。
-                        val step = if (isPrev) -3000L else 3000L
-                        var longPressed = false
-                        val seekJob = scope.launch {
-                            delay(350) // 长按阈值：超过才进入连续 seek
-                            longPressed = true
+    val step = if (isPrev) -3000L else 3000L
+    // 长按是否已触发连续 seek：触发过则松手不再切歌
+    var longFired by remember { mutableStateOf(false) }
+    var seekJob by remember { mutableStateOf<Job?>(null) }
+    // 官方 interactionSource 事件流：Press → 350ms 阈值后启动连续 seek；
+    // Release/Cancel（松手/手势取消）→ 立即取消，松手必停
+    LaunchedEffect(interactionSource, step) {
+        interactionSource.interactions.collect { interaction ->
+            when (interaction) {
+                is PressInteraction.Press -> {
+                    longFired = false
+                    seekJob?.cancel()
+                    seekJob = scope.launch {
+                        delay(350) // 长按阈值：超过才进入连续 seek
+                        longFired = true
+                        onSeekDelta(step)
+                        while (isActive) {
+                            delay(200)
                             onSeekDelta(step)
-                            while (isActive) {
-                                delay(200)
-                                onSeekDelta(step)
-                            }
                         }
-                        val released = tryAwaitRelease() // 唯一一次：阻塞到松手
-                        seekJob.cancel() // 松手必停；短按时 seekJob 未开始 seek，取消无副作用
-                        // 仅在「短按松手」时切歌；长按（已触发连续 seek）松手不再切歌
-                        if (released && !longPressed) onClickOnce()
                     }
-                )
-            },
+                }
+                is PressInteraction.Release, is PressInteraction.Cancel -> {
+                    seekJob?.cancel()
+                    seekJob = null
+                }
+            }
+        }
+    }
+    FilledIconButton(
+        // 短按切歌走官方 onClick；长按（longFired）松手不再触发切歌
+        onClick = { if (!longFired) onClickOnce() },
+        interactionSource = interactionSource,
+        shapes = IconButtonDefaults.shapes(shape = RoundedCornerShape(percent = 50)),
+        modifier = modifier
+            .size(boxW, size)
+            .focusProperties { canFocus = false },
         colors = IconButtonDefaults.filledIconButtonColors(
             containerColor = background,
             contentColor = iconColor,
