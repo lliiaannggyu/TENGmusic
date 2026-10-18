@@ -56,7 +56,6 @@ import java.io.ByteArrayOutputStream
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Image
 
 /** 用户选中的一张待匹配图片（文件名 + 压缩后的 JPEG 字节） */
 private class PickedImage(val name: String, val bytes: ByteArray)
@@ -69,7 +68,8 @@ private class CoverPair(val track: Track, val image: PickedImage, val score: Int
  *
  * 两种模式（界面全部使用 M3E 官方组件）：
  * 1. **单曲写入**：点选一首歌 → 系统照片选择器选图 → 居中裁方 + 压缩为 512px JPEG →
- *    通过 SAF 覆盖写回文件（ID3v2.3 APIC 帧，见 Id3Tag）。
+ *    通过 SAF 覆盖写回文件（ID3v2.3 APIC 帧，见 Id3Tag）。**已带封面的歌曲点击即为替换封面**，
+ *    卡片右侧徽标显示「替换 / 添加」，写入成功后即时翻转。
  * 2. **批量匹配**（参考 GitHub 高星音乐标签编辑器 Lyrico 1259★ 的批量标签处理形态）：
  *    多选图片 → 按「歌名/文件名 与 图片文件名 最长公共子串 ≥ 3 字符」自动判定对应封面 →
  *    **先把匹配结果列出来给用户看**（可逐条移除）→ 用户确认后批量写入。
@@ -83,6 +83,8 @@ fun CoverToolScreen(vm: PlayerViewModel, onClose: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var pendingTrack by remember { mutableStateOf<Track?>(null) }
+    // 已检测到 / 已写入封面的曲目 id 集合；用于在单曲列表显示「替换」徽标
+    var coveredIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
     // 批量匹配状态
     var matching by remember { mutableStateOf(false) }
     var pairs by remember { mutableStateOf<List<CoverPair>>(emptyList()) }
@@ -99,6 +101,7 @@ fun CoverToolScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                 val bytes = withContext(Dispatchers.IO) { loadCoverBytes(context, uri) }
                 if (bytes != null) {
                     vm.writeTrackCoverArt(t, bytes, "image/jpeg")
+                    coveredIds = coveredIds + t.id
                 }
             }
         }
@@ -306,10 +309,11 @@ fun CoverToolScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                     }
                 }
 
-                // ========== 单曲写入 ==========
-                item { ListHeader { Text("单曲写入") } }
+                // ========== 单曲写入（已带封面的歌曲点击即为替换封面）==========
+                item { ListHeader { Text("单曲写入 · 点击替换/添加封面") } }
                 items(tracks.size) { i ->
                     val t = tracks[i]
+                    val hasCover = t.id in coveredIds
                     Card(
                         onClick = {
                             pendingTrack = t
@@ -336,6 +340,7 @@ fun CoverToolScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                                     .size(30.dp)
                                     .clip(CircleShape)
                                     .background(Color(0x22FFFFFF)),
+                                onSuccess = { coveredIds = coveredIds + t.id },
                             )
                             Spacer(Modifier.width(8.dp))
                             Column(Modifier.weight(1f)) {
@@ -347,11 +352,16 @@ fun CoverToolScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                                     maxLines = 1,
                                 )
                             }
-                            Icon(
-                                imageVector = Icons.Filled.Image,
-                                contentDescription = "写入封面",
-                                tint = Color.Gray,
-                                modifier = Modifier.size(14.dp),
+                            // 已有封面 → 替换 / 无封面 → 添加
+                            Text(
+                                if (hasCover) "替换" else "添加",
+                                fontSize = 9.sp,
+                                color = if (hasCover) Color(0xFF98EAF9) else Color.White,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier
+                                    .clip(CircleShape)
+                                    .background(if (hasCover) Color(0x2298EAF9) else Color(0x33FFFFFF))
+                                    .padding(horizontal = 7.dp, vertical = 3.dp),
                             )
                         }
                     }

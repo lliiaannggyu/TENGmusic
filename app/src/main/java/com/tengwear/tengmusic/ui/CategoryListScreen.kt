@@ -488,7 +488,7 @@ fun CategoryListScreen(
                         onValueChange = { name = it },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(Color(0x33FFFFFF), RoundedCornerShape(18.dp))
+                            .background(Color(0x33FFFFFF), RoundedCornerShape(percent = 50))
                             .padding(8.dp)
                             .focusRequester(nameFr),
                         textStyle = TextStyle(color = Color.White, fontSize = 14.sp),

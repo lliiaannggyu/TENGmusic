@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Album
@@ -316,9 +317,9 @@ private fun TrackArtContent(track: Track) {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .clip(RoundedCornerShape(4.dp))
+            .clip(CircleShape)
             .background(Color(0xFF161616))
-            .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(4.dp))
+            .border(1.dp, Color(0x33FFFFFF), CircleShape)
     ) {
         Icon(
             imageVector = Icons.Filled.Album,

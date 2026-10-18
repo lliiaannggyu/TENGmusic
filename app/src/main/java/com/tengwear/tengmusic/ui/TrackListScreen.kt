@@ -138,6 +138,7 @@ private fun WearTrackRow(
     Card(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(0.92f),
+        shape = RoundedCornerShape(percent = 50),
         colors = CardDefaults.cardColors(
             containerColor = if (isCurrent) Color(0x2234C7F4) else Color(0xFF161B22),
         ),

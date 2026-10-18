@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -132,6 +133,7 @@ fun ListenTogetherScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                         Card(
                             onClick = {},
                             modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(percent = 50),
                             colors = CardDefaults.cardColors(
                                 containerColor = LT_CARD_SELECTED,
                                 contentColor = Color.White,
@@ -181,6 +183,7 @@ fun ListenTogetherScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                         Card(
                             onClick = {},
                             modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(percent = 50),
                             colors = CardDefaults.cardColors(
                                 containerColor = LT_CARD_SELECTED,
                                 contentColor = Color.White,
@@ -244,6 +247,7 @@ fun ListenTogetherScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                         Card(
                             onClick = { selectedPeerId = peer.id },
                             modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(percent = 50),
                             colors = CardDefaults.cardColors(
                                 containerColor = if (selected) LT_CARD_SELECTED else LT_BG,
                                 contentColor = Color.White,
@@ -323,7 +327,7 @@ fun ListenTogetherScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                                 fontSize = 9.sp,
                                 color = Color.Gray,
                                 modifier = Modifier
-                                    .clip(RoundedCornerShape(8.dp))
+                                    .clip(CircleShape)
                                     .clickable { statusMsg = null }
                                     .padding(horizontal = 6.dp, vertical = 2.dp)
                             )

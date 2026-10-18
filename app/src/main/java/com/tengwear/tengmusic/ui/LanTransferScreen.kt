@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.items as scalingItems
@@ -129,6 +130,7 @@ fun LanTransferScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                         Card(
                             onClick = {},
                             modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(percent = 50),
                             colors = CardDefaults.cardColors(
                                 containerColor = LAN_CARD_SELECTED,
                                 contentColor = Color.White,
@@ -186,6 +188,7 @@ fun LanTransferScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                     Card(
                         onClick = { selectedPeerId = peer.id },
                         modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(percent = 50),
                         colors = CardDefaults.cardColors(
                             containerColor = if (selected) LAN_CARD_SELECTED else LAN_BG,
                             contentColor = Color.White,
@@ -220,6 +223,7 @@ fun LanTransferScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                     Card(
                         onClick = { selectedTrack = i },
                         modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(percent = 50),
                         colors = CardDefaults.cardColors(
                             containerColor = if (selected) LAN_CARD_SELECTED else LAN_BG,
                             contentColor = Color.White,
@@ -288,7 +292,7 @@ fun LanTransferScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                                 fontSize = 9.sp,
                                 color = Color.Gray,
                                 modifier = Modifier
-                                    .clip(RoundedCornerShape(8.dp))
+                                    .clip(CircleShape)
                                     .clickable { statusMsg = null }
                                     .padding(horizontal = 6.dp, vertical = 2.dp)
                             )
@@ -357,14 +361,14 @@ private fun TransferProgressRow(fraction: Float, done: Long, total: Long) {    C
             Modifier
                 .fillMaxWidth()
                 .height(4.dp)
-                .clip(RoundedCornerShape(2.dp))
+                .clip(CircleShape)
                 .background(Color(0x33FFFFFF))
         ) {
             Box(
                 Modifier
                     .fillMaxWidth(fraction)
                     .height(4.dp)
-                    .clip(RoundedCornerShape(2.dp))
+                    .clip(CircleShape)
                     .background(LAN_ACCENT)
             )
         }

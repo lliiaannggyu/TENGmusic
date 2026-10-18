@@ -282,6 +282,7 @@ fun AudioSettingsScreen(
                         Card(
                             onClick = { eqExpanded = !eqExpanded },
                             modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(percent = 50),
                             colors = accentCardColors(accent),
                         ) {
                             Text(
@@ -657,6 +658,7 @@ fun AudioSettingsScreen(
                     Card(
                         onClick = onOpenLanTransfer,
                         modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(percent = 50),
                         colors = accentCardColors(accent),
                     ) {
                         Text("传歌", fontSize = 11.sp)
@@ -667,6 +669,7 @@ fun AudioSettingsScreen(
                     Card(
                         onClick = onOpenListenTogether,
                         modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(percent = 50),
                         colors = accentCardColors(accent),
                     ) {
                         Text("一起听", fontSize = 11.sp)
@@ -698,6 +701,7 @@ fun AudioSettingsScreen(
                     Card(
                         onClick = onOpenCoverTool,
                         modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(percent = 50),
                         colors = accentCardColors(accent),
                     ) {
                         Text("封面工具", fontSize = 11.sp)
@@ -713,6 +717,7 @@ fun AudioSettingsScreen(
                     Card(
                         onClick = { },
                         modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(percent = 50),
                         colors = accentCardColors(accent),
                     ) {
                         Text("播放器 UI", fontSize = 11.sp)
@@ -725,6 +730,7 @@ fun AudioSettingsScreen(
                     Card(
                         onClick = { showLicenses = !showLicenses },
                         modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(percent = 50),
                         colors = accentCardColors(accent),
                     ) {
                         Text(if (showLicenses) "用到的开源项目 ▲" else "用到的开源项目 ▼", fontSize = 11.sp)
@@ -737,6 +743,7 @@ fun AudioSettingsScreen(
                         Card(
                             onClick = { },
                             modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(percent = 50),
                             colors = CardDefaults.cardColors(),
                         ) {
                             Text(p.name, fontSize = 9.sp, maxLines = 2)
@@ -765,7 +772,7 @@ fun AudioSettingsScreen(
                         .align(Alignment.TopCenter)
                         .fillMaxWidth()
                         .height(34.dp)
-                        .background(Color(0xCC06070A), RoundedCornerShape(bottomStart = 10.dp, bottomEnd = 10.dp))
+                        .background(Color(0xCC06070A), RoundedCornerShape(bottomStart = 17.dp, bottomEnd = 17.dp))
                         .focusRequester(knobFr)
                         .focusable()
                         .onRotaryScrollEvent { event ->
@@ -903,7 +910,7 @@ private fun HexColorInput(accent: Color, onApply: (Int) -> Unit) {
                 .weight(1f)
                 .background(
                     if (bad) Color(0x33FF5A7A) else Color(0x22FFFFFF),
-                    RoundedCornerShape(14.dp),
+                    RoundedCornerShape(percent = 50),
                 )
                 .padding(horizontal = 8.dp, vertical = 6.dp),
         ) {

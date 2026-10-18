@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.runtime.Composable
@@ -84,6 +85,7 @@ fun FileManagerScreen(vm: PlayerViewModel) {
             Card(
                 onClick = { vm.selectTrack(i) },
                 modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(percent = 50),
                 colors = if (isCurrent) {
                     CardDefaults.cardColors(contentColor = ACCENT)
                 } else {
