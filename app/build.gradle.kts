@@ -12,8 +12,8 @@ android {
         applicationId = "com.tengwear.tengmusic"
         minSdk = 25          // Android 7.1：Wear OS 手表与普通安卓手机均可安装
         targetSdk = 36
-        versionCode = 33
-        versionName = "1.33"
+        versionCode = 34
+        versionName = "1.34"
     }
 
     buildFeatures {
@@ -72,8 +72,6 @@ dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2026.06.01")
 
     implementation("androidx.core:core-ktx:1.16.0")
-    // 内置文件管理器（SAF 目录浏览/多选图片）：DocumentFile
-    implementation("androidx.documentfile:documentfile:1.0.0")
     implementation("androidx.activity:activity-compose:1.11.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.4")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.9.4")

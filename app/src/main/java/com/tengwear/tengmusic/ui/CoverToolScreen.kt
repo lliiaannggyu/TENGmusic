@@ -2,7 +2,6 @@ package com.tengwear.tengmusic.ui
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.provider.OpenableColumns
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -64,8 +63,8 @@ private class CoverPair(val track: Track, val image: PickedImage, val score: Int
  * 封面工具：给音频文件（MP3）写入专辑封面。
  *
  * 两种模式（界面全部使用 M3E 官方组件）：
- * 1. **单曲写入**：点选一首歌 → 内置文件管理器（SAF 目录授权 + 应用内浏览）勾选一张图 →
- *    居中裁方 + 压缩为 512px JPEG → 通过 SAF 覆盖写回文件（ID3v2.3 APIC 帧，见 Id3Tag）。
+ * 1. **单曲写入**：点选一首歌 → 内置文件管理器（App 专属 covers 文件夹、零权限、不调系统选择器）
+ *    勾选一张图 → 居中裁方 + 压缩为 512px JPEG → 覆盖写回文件（ID3v2.3 APIC 帧，见 Id3Tag）。
  *    **已带封面的歌曲点击即为替换封面**，卡片右侧徽标显示「替换 / 添加」，写入成功后即时翻转。
  * 2. **批量匹配**（参考 GitHub 高星音乐标签编辑器 Lyrico 1259★ 的批量标签处理形态）：
  *    在文件管理器勾选多张图片 → 按「歌名/文件名 与 图片文件名 最长公共子串 ≥ 3 字符」自动判定
@@ -91,15 +90,15 @@ fun CoverToolScreen(vm: PlayerViewModel, onClose: () -> Unit) {
     var showFilePicker by remember { mutableStateOf(false) }
 
     // 文件管理器返回：单曲模式写第一张图；批量模式读图后自动匹配列给用户确认
-    fun handlePicked(uris: List<android.net.Uri>) {
+    fun handlePicked(files: List<java.io.File>) {
         showFilePicker = false
-        if (uris.isEmpty()) return
+        if (files.isEmpty()) return
         val t = pendingTrack
         pendingTrack = null
         scope.launch {
             if (t != null) {
                 // 单曲写入：取第一张选中的图覆盖写回该曲目
-                val bytes = withContext(Dispatchers.IO) { loadCoverBytes(context, uris.first()) }
+                val bytes = withContext(Dispatchers.IO) { loadCoverBytes(files.first()) }
                 if (bytes != null) {
                     vm.writeTrackCoverArt(t, bytes, "image/jpeg")
                     coveredIds = coveredIds + t.id
@@ -108,9 +107,9 @@ fun CoverToolScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                 // 批量：读图 + 自动匹配
                 matching = true
                 val images = withContext(Dispatchers.IO) {
-                    uris.mapNotNull { uri ->
-                        val name = queryDisplayName(context, uri) ?: "未命名图片"
-                        val bytes = loadCoverBytes(context, uri) ?: return@mapNotNull null
+                    files.mapNotNull { file ->
+                        val name = file.name
+                        val bytes = loadCoverBytes(file) ?: return@mapNotNull null
                         PickedImage(name, bytes)
                     }
                 }
@@ -368,32 +367,10 @@ fun CoverToolScreen(vm: PlayerViewModel, onClose: () -> Unit) {
 
 // ---------------- 图片读取 / 匹配工具 ----------------
 
-/** 读取选中图片的显示文件名（SAF） */
-private fun queryDisplayName(
-    context: android.content.Context,
-    uri: android.net.Uri,
-): String? {
-    return try {
-        context.contentResolver
-            .query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
-            ?.use { c ->
-                val idx = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                if (idx >= 0 && c.moveToFirst()) c.getString(idx) else null
-            }
-    } catch (_: Throwable) {
-        null
-    }
-}
-
 /** 解码图片 → 居中裁方 → 512px → JPEG 82% 压缩；失败返回 null */
-private fun loadCoverBytes(
-    context: android.content.Context,
-    uri: android.net.Uri,
-): ByteArray? {
+private fun loadCoverBytes(file: java.io.File): ByteArray? {
     return try {
-        val raw = context.contentResolver.openInputStream(uri)?.use {
-            BitmapFactory.decodeStream(it)
-        } ?: return null
+        val raw = BitmapFactory.decodeFile(file.absolutePath) ?: return null
         // 居中裁方 → 缩到 512 → JPEG 压缩
         val side = minOf(raw.width, raw.height)
         val x = (raw.width - side) / 2
