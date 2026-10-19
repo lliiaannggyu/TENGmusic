@@ -1,5 +1,8 @@
 package com.tengwear.tengmusic.ui
 
+import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -42,6 +45,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.wear.compose.foundation.rotary.RotaryScrollableDefaults
 import androidx.wear.compose.foundation.rotary.rotaryScrollable
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
@@ -88,10 +92,16 @@ fun AlbumCoverFlow(
 ) {
     val tracks by vm.tracks.collectAsState()
     val index by vm.currentIndex.collectAsState()
+    val context = LocalContext.current
 
     // 实时、可靠地算出「最靠近屏幕中心的歌曲」索引（替代库内部滞后的 selectedIndex）。
     // 列表首尾各有一个占位 spacer，所以 列表下标 - 1 = 歌曲下标。
     val centeredIndex = remember { mutableStateOf(0) }
+    // 马达（每翻一张专辑时同步震动）。系统默认的连续表冠震动已在 rotaryScrollable 关闭，
+    // 这里接管为「每翻一张才震一下」，与翻页视觉融洽、不各弄各的。
+    val vibrator = remember { context.getSystemService(Vibrator::class.java) }
+    // 开屏自动定位（scrollToItem）时压住震动，避免一打开就莫名震一下
+    val buzzSuppressUntil = remember { mutableStateOf(0L) }
 
     // 用可空 var 持有 state，避免在 rememberCoverFlowState 的回调里引用尚未赋值的局部 val
     var state: CoverFlowState? = null
@@ -122,7 +132,15 @@ fun AlbumCoverFlow(
         // 轮询布局信息，实时算出最靠近中心的歌曲下标（无需 snapshotFlow，兼容性更好）
         var stillFrames = 0
         while (true) {
-            centeredIndex.value = computeCenteredIndex(listState, tracks.size)
+            val newIdx = computeCenteredIndex(listState, tracks.size)
+            if (newIdx != centeredIndex.value) {
+                centeredIndex.value = newIdx
+                // 每翻一张专辑 → 触发一次马达短震，与翻页视觉同步。
+                // 开屏自动定位的 700ms 静默窗口内不打，避免误震。
+                if (System.currentTimeMillis() >= buzzSuppressUntil.value) {
+                    buzz(vibrator)
+                }
+            }
             // 兜底归中：表冠滚动用的是 RotaryScrollableDefaults.behavior（连续滚动、
             // 不带按项吸附），偶发会停在两张封面中间。滚动完全停止后若居中封面仍
             // 偏离视口中心且持续多帧，补一次吸附，杜绝"卡在切换动画那里不回正"。
@@ -149,6 +167,8 @@ fun AlbumCoverFlow(
         var tries = 0
         while (state?.geometry == null && tries < 100) { delay(16); tries++ }
         val start = if (index in 0..tracks.lastIndex) index else 0
+        // 压住接下来的 700ms 震动：开屏自动定位这一步会让居中下标跳变，不该触发马达
+        buzzSuppressUntil.value = System.currentTimeMillis() + 700
         state?.scrollToItem(start)
     }
 
@@ -184,7 +204,12 @@ fun AlbumCoverFlow(
                 .let { m ->
                     if (listState != null) {
                         m.rotaryScrollable(
-                            RotaryScrollableDefaults.behavior(scrollableState = listState),
+                            RotaryScrollableDefaults.behavior(
+                                scrollableState = listState,
+                                // 关闭系统默认的连续表冠震动：它每转一格就震、与专辑吸附各弄各的。
+                                // 改为在 AlbumCoverFlow 里「每翻一张专辑」单独打一次短震，才融洽。
+                                hapticFeedbackEnabled = false,
+                            ),
                             focusRequester,
                         )
                     } else {
@@ -263,6 +288,20 @@ fun AlbumCoverFlow(
                 style = TextStyle(shadow = nameShadow),
             )
         }
+    }
+}
+
+/**
+ * 触发一次短促马达震动（约 12ms），用于每翻一张专辑时的触觉反馈。
+ * 与封面翻到居中的视觉瞬间对齐，让表冠旋转和马达震动融洽、不各弄各的。
+ */
+@Suppress("DEPRECATION")
+private fun buzz(vibrator: Vibrator?) {
+    if (vibrator == null) return
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        vibrator.vibrate(VibrationEffect.createOneShot(12, VibrationEffect.DEFAULT_AMPLITUDE))
+    } else {
+        vibrator.vibrate(12)
     }
 }
 

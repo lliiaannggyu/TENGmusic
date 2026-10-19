@@ -3,6 +3,8 @@
 
     <!-- 本地音乐读取 -->
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <!-- 每翻一张专辑的马达触觉反馈 -->
+    <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
 

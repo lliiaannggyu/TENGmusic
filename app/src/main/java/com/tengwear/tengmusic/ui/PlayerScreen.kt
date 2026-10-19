@@ -376,17 +376,20 @@ fun WearPlayerScreen(
                                     //
                                     // 参数换算（P = 盘峰径）：
                                     //   盘   stroke 24dp → 峰 22.64 画布单位 → scale = P/45.28（内缘 -2 → 实心）
-                                    //   轨道 stroke 2.77dp → 中心线 18.88 → scale = 0.0314P（视觉宽 0.087P）
+                                    //   轨道 stroke 2.77dp → 中心线 18.88 → scale = 0.0230P（视觉宽 0.064P，更贴合盘）
                                     //   λ = 2πr/8（锁 8 瓣）；waveSpeed = λ/2 → 两例角速度相同，波峰永不漂移
                                     val p: Float = playSize.value
                                     val scaleDisc: Float = p / 45.28f
-                                    val scaleRing: Float = 0.0314f * p
+                                    // 轨道半径收紧：中心径从 0.71p 缩到 0.52p，紧贴盘面（贴合）
+                                    val scaleRing: Float = 0.0230f * p
                                     val strokeDisc: Float = with(density) { 24.dp.toPx() }
                                     val strokeRing: Float = with(density) { 2.77.dp.toPx() }
-                                    val ringBox: Dp = playSize * 1.51f
-                                    // 播放 → 振幅 1（±5.1%，与参考图一致）；暂停 → 0
-                                    // （官方 Increasing/DecreasingAmplitude 缓动，平滑退化为圆）
-                                    val waveAmp: (Float) -> Float = { if (isPlaying) 1f else 0f }
+                                    // 外框收紧（原 1.51 → 1.14），波浪进度条整体更小
+                                    val ringBox: Dp = playSize * 1.14f
+                                    // 盘波幅加大：播放 1.7 / 暂停 1.0（暂停不再退化为圆，与环一起转动）
+                                    val discAmp: (Float) -> Float = { if (isPlaying) 1.7f else 1.0f }
+                                    // 环 + 进度弧共用，略小以保持贴合重合、波幅不过度
+                                    val ringAmp: (Float) -> Float = { if (isPlaying) 1.2f else 0.9f }
                                     // 盘面为不透明主题色 → 图标按亮度取深 teal / 白
                                     val wavyIcon: Color =
                                         if (themeColor.luminance() > 0.4f) {
@@ -411,7 +414,7 @@ fun WearPlayerScreen(
                                             trackColor = Color.Transparent,
                                             stroke = Stroke(strokeDisc, cap = StrokeCap.Round),
                                             trackStroke = Stroke(strokeDisc, cap = StrokeCap.Round),
-                                            amplitude = waveAmp,
+                                            amplitude = discAmp,
                                             wavelength = 9.42.dp,
                                             waveSpeed = 4.71.dp,
                                             gapSize = 0.dp,
@@ -427,7 +430,7 @@ fun WearPlayerScreen(
                                             trackColor = Color.Transparent,
                                             stroke = Stroke(strokeRing, cap = StrokeCap.Round),
                                             trackStroke = Stroke(strokeRing, cap = StrokeCap.Round),
-                                            amplitude = waveAmp,
+                                            amplitude = ringAmp,
                                             wavelength = 17.75.dp,
                                             waveSpeed = 8.88.dp,
                                             gapSize = 0.dp,
@@ -443,7 +446,7 @@ fun WearPlayerScreen(
                                             trackColor = Color.Transparent,
                                             stroke = Stroke(strokeRing, cap = StrokeCap.Round),
                                             trackStroke = Stroke(strokeRing, cap = StrokeCap.Round),
-                                            amplitude = waveAmp,
+                                            amplitude = ringAmp,
                                             wavelength = 17.75.dp,
                                             waveSpeed = 8.88.dp,
                                             gapSize = 0.dp,
