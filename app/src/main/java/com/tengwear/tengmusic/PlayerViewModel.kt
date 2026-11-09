@@ -216,6 +216,11 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     private val _coverMessage = MutableStateFlow<String?>(null)
     val coverMessage = _coverMessage.asStateFlow()
 
+    // ---------------- 自定义音源（在线搜索下载用） ----------------
+
+    private val _musicSources = MutableStateFlow<List<MusicSource>>(emptyList())
+    val musicSources = _musicSources.asStateFlow()
+
     // ---------------- 一起听（局域网推送播放） ----------------
 
     /**
@@ -247,6 +252,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         // 而不是只剩一个开/关开关。真实频段会在首次播放 attach 后用设备值覆盖。
         _eqFreqs.value = listOf(60, 230, 910, 3600, 14000)
         _eqGains.value = List(5) { 0 }
+        _musicSources.value = SettingsRepository.getMusicSources(getApplication())
         viewModelScope.launch(Dispatchers.IO) {
             val loaded = AudioRepository.loadTracks(getApplication())
             _tracks.value = loaded
@@ -663,6 +669,119 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             val loaded = AudioRepository.loadTracks(getApplication())
             _tracks.value = loaded
             _albums.value = groupTracksIntoAlbums(loaded)
+        }
+    }
+
+    // ---------------- 自定义音源 / 在线搜索下载 ----------------
+
+    /** 新增自定义音源（网易云接口兼容 API 基址） */
+    fun addMusicSource(name: String, baseUrl: String) {
+        if (baseUrl.isBlank()) return
+        SettingsRepository.addMusicSource(getApplication(), MusicSource(name.trim(), baseUrl.trim()))
+        _musicSources.value = SettingsRepository.getMusicSources(getApplication())
+    }
+
+    /** 删除第 [index] 个自定义音源 */
+    fun removeMusicSource(index: Int) {
+        SettingsRepository.removeMusicSource(getApplication(), index)
+        _musicSources.value = SettingsRepository.getMusicSources(getApplication())
+    }
+
+    /**
+     * 下载在线搜索到的歌曲进本地曲库，成功后自动用原播放器播放：
+     * 音源取播放直链 → 写入公共 Music/TENGMUSIC（MediaStore/扫描入库）→ 重扫曲库 → selectTrack 播放。
+     * 进度通过 coverMessage 透出（下载页与封面工具共用同一提示条）。
+     */
+    fun downloadOnlineSong(song: OnlineSong, sourceBaseUrl: String) {
+        _coverMessage.value = "正在获取链接：${song.title}"
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val audioUrl = OnlineMusicApi.playUrl(sourceBaseUrl, song.id)
+                _coverMessage.value = "正在下载：${song.title}"
+                val newId = saveOnlineSong(getApplication(), song, audioUrl) { got ->
+                    val mb = got / (1024 * 1024)
+                    if (mb > 0) _coverMessage.value = "正在下载：${song.title}（${mb}MB）"
+                }
+                // 同步重扫曲库（不走 refreshLibrary 的异步竞态），定位新歌并用原播放器播放
+                val loaded = AudioRepository.loadTracks(getApplication())
+                _tracks.value = loaded
+                _albums.value = groupTracksIntoAlbums(loaded)
+                val baseName = onlineFileName(song).substringBeforeLast('.')
+                var idx = if (newId >= 0) loaded.indexOfFirst { it.id == newId } else -1
+                if (idx < 0) idx = loaded.indexOfFirst { it.displayName.contains(baseName) }
+                if (idx < 0) idx = loaded.indexOfFirst { it.title == song.title }
+                if (idx >= 0) {
+                    withContext(Dispatchers.Main) { selectTrack(idx) }
+                    _coverMessage.value = "已下载：${song.title}，开始播放"
+                } else {
+                    _coverMessage.value = "已下载：${song.title}（稍后可在曲库看到）"
+                }
+            } catch (t: Throwable) {
+                _coverMessage.value = "下载失败：${t.message ?: t.javaClass.simpleName}"
+            }
+        }
+    }
+
+    /** 下载文件的落盘名（歌名含非法字符时替换为 _） */
+    private fun onlineFileName(song: OnlineSong): String {
+        val raw = "${song.artist} - ${song.title}.mp3"
+        return raw.replace(Regex("[\\\\/:*?\"<>|]"), "_")
+    }
+
+    /**
+     * 把在线歌曲写入公共音乐目录（MediaStore）：
+     * - API 29+：MediaStore 插入 + IS_PENDING 流程（无需存储权限）
+     * - API 25~28：直接写 Music/TENGMUSIC + MediaScanner 扫描（清单已声明 WRITE_EXTERNAL_STORAGE）
+     * @return 新音频的 MediaStore id（低版本扫描异步、拿不到时返回 -1，由调用方按文件名回找）
+     */
+    private fun saveOnlineSong(
+        context: android.content.Context,
+        song: OnlineSong,
+        audioUrl: String,
+        onProgress: (Long) -> Unit,
+    ): Long {
+        val name = onlineFileName(song)
+        return if (android.os.Build.VERSION.SDK_INT >= 29) {
+            val cr = context.contentResolver
+            val values = android.content.ContentValues().apply {
+                put(android.provider.MediaStore.Audio.Media.DISPLAY_NAME, name)
+                put(android.provider.MediaStore.Audio.Media.MIME_TYPE, "audio/mpeg")
+                put(
+                    android.provider.MediaStore.Audio.Media.RELATIVE_PATH,
+                    android.os.Environment.DIRECTORY_MUSIC + "/TENGMUSIC",
+                )
+                put(android.provider.MediaStore.Audio.Media.IS_PENDING, 1)
+            }
+            val uri = cr.insert(android.provider.MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, values)
+                ?: throw java.io.IOException("创建音频文件失败（存储不可用）")
+            try {
+                cr.openOutputStream(uri)?.use {
+                    OnlineMusicApi.download(audioUrl, it, onProgress)
+                } ?: throw java.io.IOException("打开输出流失败")
+            } catch (t: Throwable) {
+                cr.delete(uri, null, null) // 下载失败清掉残留的 pending 记录
+                throw t
+            }
+            values.clear()
+            values.put(android.provider.MediaStore.Audio.Media.IS_PENDING, 0)
+            cr.update(uri, values, null, null)
+            uri.lastPathSegment?.toLongOrNull() ?: -1L
+        } else {
+            val dir = java.io.File(
+                android.os.Environment.getExternalStoragePublicDirectory(
+                    android.os.Environment.DIRECTORY_MUSIC
+                ),
+                "TENGMUSIC",
+            )
+            if (!dir.exists()) dir.mkdirs()
+            val f = java.io.File(dir, name)
+            java.io.FileOutputStream(f).use {
+                OnlineMusicApi.download(audioUrl, it, onProgress)
+            }
+            android.media.MediaScannerConnection.scanFile(
+                context, arrayOf(f.absolutePath), arrayOf("audio/mpeg"), null
+            )
+            -1L
         }
     }
 

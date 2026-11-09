@@ -31,7 +31,7 @@ import kotlinx.coroutines.launch
  * （真圆手表的屏幕本就是圆的，超出圆形的内容由系统自动裁切）。
  *
  * 圆形表盘标准交互（避免手机式的「竖滑套横滑」二维手势）：
- *  - 横向翻页（左右滑）：0 播放器 → 1 歌词 → 2 设置
+ *  - 横向翻页（左右滑）：0 播放器 → 1 歌词 → 2 在线搜索 → 3 设置
  *  - 播放器「列表」按钮：唤起平铺曲目列表（覆盖层）
  *  - 播放器/歌词/设置「选专辑」：上滑屏幕或点提示唤起 Cover Flow（覆盖层，轻触返回）
  *
@@ -42,7 +42,7 @@ fun WearMusicApp(vm: PlayerViewModel) {
     WearMusicTheme {
         AppScaffold {
             Box(modifier = Modifier.fillMaxSize()) {
-                val pager = rememberPagerState(pageCount = { 3 })
+                val pager = rememberPagerState(pageCount = { 4 })
                 var showTrackList by remember { mutableStateOf(false) }
                 var showAlbumFlow by remember { mutableStateOf(false) }
                 var showCoverTool by remember { mutableStateOf(false) }
@@ -99,13 +99,17 @@ fun WearMusicApp(vm: PlayerViewModel) {
                             onOpenAlbumFlow = { showAlbumFlow = true },
                             active = currentPage == 1 && !showAlbumFlow,
                         )
+                        2 -> OnlineSearchScreen(
+                            vm = vm,
+                            active = currentPage == 2 && !showAlbumFlow,
+                        )
                         else -> AudioSettingsScreen(
                             vm = vm,
                             onOpenAlbumFlow = { showAlbumFlow = true },
                             onOpenCoverTool = { showCoverTool = true },
                             onOpenLanTransfer = { showLanTransfer = true },
                             onOpenListenTogether = { showListenTogether = true },
-                            active = currentPage == 2 && !showAlbumFlow && !showCoverTool,
+                            active = currentPage == 3 && !showAlbumFlow && !showCoverTool,
                         )
                     }
                 }

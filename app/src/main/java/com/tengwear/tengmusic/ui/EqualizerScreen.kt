@@ -172,6 +172,8 @@ fun AudioSettingsScreen(
     val lyricColor by vm.lyricColor.collectAsState()
     val lyricTransition by vm.lyricTransition.collectAsState()
     val accent = Color(lyricColor)
+    // 自定义音源列表（音源分组用；在 Composable 顶层收集，不能放 lazy 作用域里）
+    val sources by vm.musicSources.collectAsState()
 
     val listState = rememberScalingLazyListState()
     val listFr = rememberRotaryFocusRequester(active)
@@ -188,6 +190,7 @@ fun AudioSettingsScreen(
     var secLyric by remember { mutableStateOf(false) }
     var secLyricAnim by remember { mutableStateOf(false) }
     var secLan by remember { mutableStateOf(false) }
+    var secSource by remember { mutableStateOf(false) }
     var secTool by remember { mutableStateOf(true) }
     var secAbout by remember { mutableStateOf(false) }
     val knobFr = remember { FocusRequester() }
@@ -706,6 +709,123 @@ fun AudioSettingsScreen(
                             valueRange = 1f..100f,
                             modifier = Modifier.fillMaxWidth(),
                             colors = accentSliderColors(accent),
+                        )
+                    }
+                }
+                }
+
+                // ========== 音源（在线搜索下载，默认折叠）==========
+                collapsibleSection("音源", secSource, { secSource = !secSource }, accent) {
+
+                // 已导入音源列表：名称 + 地址 + 删除
+                items(sources.size) { i ->
+                    val s = sources[i]
+                    Card(
+                        onClick = { },
+                        modifier = Modifier.fillMaxWidth(0.94f),
+                        shape = RoundedCornerShape(percent = 50),
+                        colors = accentCardColors(accent),
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(s.displayName, fontSize = 11.sp, maxLines = 1)
+                                Text(
+                                    s.baseUrl,
+                                    fontSize = 8.sp,
+                                    color = Color.Gray,
+                                    maxLines = 1,
+                                )
+                            }
+                            Text(
+                                "删除",
+                                fontSize = 10.sp,
+                                color = Color(0xFFFF8A9A),
+                                modifier = Modifier
+                                    .clickable { vm.removeMusicSource(i) }
+                                    .padding(horizontal = 6.dp, vertical = 4.dp),
+                            )
+                        }
+                    }
+                }
+
+                // 新增输入：名称（可空）+ API 地址
+                item {
+                    var newName by remember { mutableStateOf("") }
+                    var newUrl by remember { mutableStateOf("") }
+                    var badUrl by remember { mutableStateOf(false) }
+                    Column(
+                        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(Color(0x22FFFFFF), RoundedCornerShape(percent = 50))
+                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                        ) {
+                            if (newName.isEmpty()) {
+                                Text("音源名称（可留空）", fontSize = 9.sp, color = Color.Gray)
+                            }
+                            BasicTextField(
+                                value = newName,
+                                onValueChange = { newName = it },
+                                singleLine = true,
+                                textStyle = TextStyle(color = Color.White, fontSize = 10.sp),
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(
+                                    if (badUrl) Color(0x33FF5A7A) else Color(0x22FFFFFF),
+                                    RoundedCornerShape(percent = 50),
+                                )
+                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                        ) {
+                            if (newUrl.isEmpty()) {
+                                Text("API 地址（https://…，网易云接口兼容）", fontSize = 9.sp, color = Color.Gray)
+                            }
+                            BasicTextField(
+                                value = newUrl,
+                                onValueChange = { newUrl = it; badUrl = false },
+                                singleLine = true,
+                                textStyle = TextStyle(color = Color.White, fontSize = 10.sp),
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "添加音源",
+                            fontSize = 11.sp,
+                            color = accent,
+                            modifier = Modifier
+                                .background(Color(0x22FFFFFF), RoundedCornerShape(percent = 50))
+                                .clickable {
+                                    val url = newUrl.trim()
+                                    if (url.startsWith("http://") || url.startsWith("https://")) {
+                                        vm.addMusicSource(newName, url)
+                                        newName = ""
+                                        newUrl = ""
+                                        badUrl = false
+                                    } else {
+                                        badUrl = true
+                                    }
+                                }
+                                .padding(horizontal = 16.dp, vertical = 5.dp),
+                        )
+                        if (badUrl) {
+                            Text("地址需以 http(s):// 开头", fontSize = 9.sp, color = Color(0xFFFF8A9A))
+                        }
+                        Text(
+                            "用于「在线搜索」页搜索并下载音乐",
+                            fontSize = 8.sp,
+                            color = Color.Gray,
+                            modifier = Modifier.padding(top = 4.dp),
                         )
                     }
                 }

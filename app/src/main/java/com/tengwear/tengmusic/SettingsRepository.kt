@@ -154,4 +154,53 @@ object SettingsRepository {
             .putInt(KEY_LAN_COMPRESS_MB, mb.coerceIn(1, 100))
             .apply()
     }
+
+    // ---------------- 自定义在线音源（网易云接口兼容） ----------------
+
+    private const val KEY_MUSIC_SOURCES = "music_sources"
+
+    /** 读取全部自定义音源（存为 JSON 数组；解析失败视为空） */
+    fun getMusicSources(context: Context): List<MusicSource> {
+        return try {
+            val raw = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+                .getString(KEY_MUSIC_SOURCES, null) ?: return emptyList()
+            val arr = org.json.JSONArray(raw)
+            (0 until arr.length()).mapNotNull { i ->
+                val o = arr.optJSONObject(i) ?: return@mapNotNull null
+                val url = o.optString("baseUrl", "").trim()
+                if (url.isBlank()) null else MusicSource(o.optString("name", "").trim(), url)
+            }
+        } catch (_: Throwable) {
+            emptyList()
+        }
+    }
+
+    /** 追加一个音源（自动去重：同基址不重复加） */
+    fun addMusicSource(context: Context, source: MusicSource) {
+        val cur = getMusicSources(context)
+        if (cur.any { it.baseUrl == source.baseUrl.trim() }) return
+        saveMusicSources(context, cur + source.copy(baseUrl = source.baseUrl.trim()))
+    }
+
+    /** 按下标删除音源 */
+    fun removeMusicSource(context: Context, index: Int) {
+        val cur = getMusicSources(context).toMutableList()
+        if (index !in cur.indices) return
+        cur.removeAt(index)
+        saveMusicSources(context, cur)
+    }
+
+    private fun saveMusicSources(context: Context, list: List<MusicSource>) {
+        val arr = org.json.JSONArray()
+        list.forEach {
+            arr.put(org.json.JSONObject().apply {
+                put("name", it.name)
+                put("baseUrl", it.baseUrl)
+            })
+        }
+        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_MUSIC_SOURCES, arr.toString())
+            .apply()
+    }
 }
