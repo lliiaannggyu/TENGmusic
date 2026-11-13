@@ -41,6 +41,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.changedToUp
@@ -553,6 +554,42 @@ fun AudioSettingsScreen(
                         )
                     }
                 }
+
+                // 专辑流表冠手感：滚动速度 + 惯性（0.5x ~ 3.0x）
+                item {
+                    val crownSens by vm.crownSens.collectAsState()
+                    Column(
+                        Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text("专辑流滚动速度 %.1fx".format(crownSens), fontSize = 11.sp, color = accent)
+                        Slider(
+                            value = crownSens,
+                            onValueChange = { vm.setCrownScrollSens(it) },
+                            steps = 24,
+                            valueRange = 0.5f..3f,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = accentSliderColors(accent),
+                        )
+                    }
+                }
+                item {
+                    val crownFling by vm.crownFling.collectAsState()
+                    Column(
+                        Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text("专辑流惯性 %.1fx".format(crownFling), fontSize = 11.sp, color = accent)
+                        Slider(
+                            value = crownFling,
+                            onValueChange = { vm.setCrownFling(it) },
+                            steps = 24,
+                            valueRange = 0.5f..3f,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = accentSliderColors(accent),
+                        )
+                    }
+                }
                 }
 
                 // ========== 歌词（字号 / 颜色，默认折叠）==========
@@ -951,8 +988,19 @@ private fun ScalingLazyListScope.collapsibleSection(
     content: ScalingLazyListScope.() -> Unit,
 ) {
     item {
+        // 每次点击分组标题（▼/▲）：轻震动反馈 + 箭头完整转向动画
+        val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+        val arrowAngle by androidx.compose.animation.core.animateFloatAsState(
+            targetValue = if (expanded) 180f else 0f,
+            label = "secArrow",
+        )
         Card(
-            onClick = onToggle,
+            onClick = {
+                haptic.performHapticFeedback(
+                    androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove
+                )
+                onToggle()
+            },
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(percent = 50),
             colors = accentCardColors(accent),
@@ -968,9 +1016,10 @@ private fun ScalingLazyListScope.collapsibleSection(
                     modifier = Modifier.weight(1f),
                 )
                 Text(
-                    if (expanded) "▲" else "▼",
+                    "▼",
                     fontSize = 11.sp,
                     color = accent,
+                    modifier = Modifier.graphicsLayer { rotationZ = arrowAngle },
                 )
             }
         }

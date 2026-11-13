@@ -5,14 +5,20 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.AnimationState
+import androidx.compose.animation.core.animateDecay
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.rememberSplineBasedDecay
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.FlingBehavior
+import androidx.compose.foundation.gestures.ScrollScope
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.rememberScrollableState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -197,15 +203,47 @@ fun AlbumCoverFlow(
         // 松手后由 LazyRow 自带的吸附 fling 把封面归中。
         val listState = state?.lazyListState
 
+        // 表冠手感（设置页「播放器外观」可调）：
+        //  - 滚动速度：包一层 ScrollableState，把表冠滚动像素按倍率放大/缩小
+        //  - 惯性：自定义 spline fling，把初始速度按倍率放大/缩小
+        val crownSens by vm.crownSens.collectAsState()
+        val crownFling by vm.crownFling.collectAsState()
+        // 倍率放 holder：变化时不重建 ScrollableState / FlingBehavior
+        val sensHolder = remember { mutableFloatStateOf(1f) }
+        sensHolder.value = crownSens
+        val flingHolder = remember { mutableFloatStateOf(1f) }
+        flingHolder.value = crownFling
+        val decay = rememberSplineBasedDecay<Float>()
+        val scaledFling = remember(decay) {
+            object : FlingBehavior {
+                override suspend fun ScrollScope.performFling(initialVelocity: Float): Float {
+                    val v0 = initialVelocity * flingHolder.value
+                    if (abs(v0) <= 50f) return v0
+                    var lastValue = 0f
+                    AnimationState(initialValue = 0f, initialVelocity = v0).animateDecay(decay) {
+                        val delta = value - lastValue
+                        lastValue = value
+                        val consumed = scrollBy(delta)
+                        if (abs(delta - consumed) > 0.5f) cancelAnimation() // 已到边界，停
+                    }
+                    return lastValue
+                }
+            }
+        }
+        val scaledListState = listState?.let { ls ->
+            rememberScrollableState { delta -> ls.dispatchRawDelta(delta * sensHolder.value) }
+        }
+
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 // 官方表冠支持：自动抢占焦点 + 驱动封面滚动
                 .let { m ->
-                    if (listState != null) {
+                    if (scaledListState != null) {
                         m.rotaryScrollable(
                             RotaryScrollableDefaults.behavior(
-                                scrollableState = listState,
+                                scrollableState = scaledListState,
+                                flingBehavior = scaledFling,
                                 // 关闭系统默认的连续表冠震动：它每转一格就震、与专辑吸附各弄各的。
                                 // 改为在 AlbumCoverFlow 里「每翻一张专辑」单独打一次短震，才融洽。
                                 hapticFeedbackEnabled = false,

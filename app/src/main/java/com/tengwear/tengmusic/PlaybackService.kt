@@ -19,7 +19,11 @@ class PlaybackService : MediaSessionService() {
 
     override fun onCreate() {
         super.onCreate()
-        player = ExoPlayer.Builder(this).build().apply {
+        player = ExoPlayer.Builder(this)
+            // 耳机断开（拔线/蓝牙断连触发 AUDIO_BECOMING_NOISY）时自动暂停播放
+            .setHandleAudioBecomingNoisy(true)
+            .build()
+            .apply {
             // 音频会话就绪后挂载均衡器：EQ 只有拿到 audioSessionId 才能对播放链路生效
             addListener(object : Player.Listener {
                 override fun onAudioSessionIdChanged(audioSessionId: Int) {

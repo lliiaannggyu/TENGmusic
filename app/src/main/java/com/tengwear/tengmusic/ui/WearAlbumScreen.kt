@@ -131,7 +131,18 @@ private fun AlbumRow(album: Album, onClick: () -> Unit) {
 @Composable
 private fun AlbumDetailScreen(vm: PlayerViewModel, album: Album, onBack: () -> Unit) {
     val tracks by vm.tracks.collectAsState()
+    val albums by vm.albums.collectAsState()
     val index by vm.currentIndex.collectAsState()
+
+    // 修复「打开专辑显示不了歌曲」：进入详情后曲库可能已被刷新（下载/传歌/重扫），
+    // 捕获的 Album 快照里的 trackIndices 会整体失效。这里实时按 albumId(+专辑名)
+    // 从当前曲库重新解析专辑；找不到时才退回快照。
+    val liveAlbum = remember(album, albums) {
+        albums.firstOrNull { it.albumId == album.albumId && it.name == album.name }
+            ?: albums.firstOrNull { it.albumId == album.albumId }
+            ?: album
+    }
+    val displayAlbum = liveAlbum
 
     val listState = rememberScalingLazyListState()
     val focusRequester = rememberRotaryFocusRequester()
@@ -144,14 +155,14 @@ private fun AlbumDetailScreen(vm: PlayerViewModel, album: Album, onBack: () -> U
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         item {
-            AlbumArt(uri = album.albumArtUri, size = 72.dp)
+            AlbumArt(uri = displayAlbum.albumArtUri, size = 72.dp)
         }
         item {
-            Text(album.name, fontSize = 14.sp, maxLines = 2, textAlign = TextAlign.Center)
+            Text(displayAlbum.name, fontSize = 14.sp, maxLines = 2, textAlign = TextAlign.Center)
         }
         item {
             Text(
-                "${album.artist} · ${album.trackCount} 首",
+                "${displayAlbum.artist} · ${displayAlbum.trackCount} 首",
                 fontSize = 10.sp,
                 color = Color.Gray,
                 maxLines = 1,
@@ -166,13 +177,13 @@ private fun AlbumDetailScreen(vm: PlayerViewModel, album: Album, onBack: () -> U
                 CompactButton(onClick = onBack) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回专辑列表")
                 }
-                Button(onClick = { vm.playAlbum(album) }, modifier = Modifier.size(44.dp)) {
+                Button(onClick = { vm.playAlbum(displayAlbum) }, modifier = Modifier.size(44.dp)) {
                     Icon(Icons.Filled.PlayArrow, contentDescription = "播放全部")
                 }
             }
         }
-        items(album.trackIndices.size) { i ->
-            val globalIndex = album.trackIndices[i]
+        items(displayAlbum.trackIndices.size) { i ->
+            val globalIndex = displayAlbum.trackIndices[i]
             val t = tracks.getOrNull(globalIndex)
             val isCurrent = globalIndex == index
             Row(

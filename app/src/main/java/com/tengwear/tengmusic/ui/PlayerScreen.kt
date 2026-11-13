@@ -166,7 +166,8 @@ fun WearPlayerScreen(
                     m.focusRequester(focusRequester)
                         .focusable()
                         .onRotaryScrollEvent { event ->
-                            vm.setVolume((volume + event.verticalScrollPixels * 0.0015f).coerceIn(0f, 1f))
+                            // 表冠调音量：无级步进，每格表冠 ≈ 1%
+                            vm.setVolume((volume + event.verticalScrollPixels * 0.00025f).coerceIn(0f, 1f))
                             true
                         }
                 } else {
@@ -554,8 +555,9 @@ fun WearPlayerScreen(
                         .focusRequester(volFr)
                         .focusable()
                         .onRotaryScrollEvent { event ->
+                            // 表冠调音量：无级步进，每格表冠 ≈ 1%
                             vm.setVolume(
-                                (volume + event.verticalScrollPixels * 0.0015f).coerceIn(0f, 1f)
+                                (volume + event.verticalScrollPixels * 0.00025f).coerceIn(0f, 1f)
                             )
                             true
                         }

@@ -151,6 +151,14 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     private val _ringStroke = MutableStateFlow(SettingsRepository.getRingStroke(getApplication()))
     val ringStroke = _ringStroke.asStateFlow()
 
+    /** 专辑流表冠滚动速度倍率（0.5 ~ 3.0，1 = 官方默认手感） */
+    private val _crownSens = MutableStateFlow(SettingsRepository.getCrownScrollSens(getApplication()))
+    val crownSens = _crownSens.asStateFlow()
+
+    /** 专辑流表冠惯性倍率（0.5 ~ 3.0，1 = 官方默认惯性） */
+    private val _crownFling = MutableStateFlow(SettingsRepository.getCrownFling(getApplication()))
+    val crownFling = _crownFling.asStateFlow()
+
     /**
      * 进度条样式：0 = 圆环（默认），1 = 波浪圆环（M3E 官方
      * CircularWavyProgressIndicator 同款：轨道平弧 + 进度正弦波沿弧流动）。
@@ -1016,6 +1024,16 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     fun setRingStroke(dp: Float) {
         _ringStroke.value = dp.coerceIn(2f, 12f)
         SettingsRepository.setRingStroke(getApplication(), dp)
+    }
+
+    fun setCrownScrollSens(v: Float) {
+        _crownSens.value = v.coerceIn(0.5f, 3f)
+        SettingsRepository.setCrownScrollSens(getApplication(), v)
+    }
+
+    fun setCrownFling(v: Float) {
+        _crownFling.value = v.coerceIn(0.5f, 3f)
+        SettingsRepository.setCrownFling(getApplication(), v)
     }
 
     /** 切换进度条样式（0 = 圆环，1 = 波浪） */

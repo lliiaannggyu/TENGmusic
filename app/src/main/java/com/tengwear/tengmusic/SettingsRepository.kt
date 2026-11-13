@@ -155,6 +155,37 @@ object SettingsRepository {
             .apply()
     }
 
+    // ---------------- 专辑流表冠手感（滚动速度 / 惯性） ----------------
+
+    private const val KEY_CROWN_SCROLL_SENS = "crown_scroll_sens"
+    private const val KEY_CROWN_FLING = "crown_fling"
+
+    /** 专辑流表冠滚动速度倍率（0.5 ~ 3.0，默认 1 = 官方默认手感） */
+    fun getCrownScrollSens(context: Context): Float =
+        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+            .getFloat(KEY_CROWN_SCROLL_SENS, 1f)
+            .coerceIn(0.5f, 3f)
+
+    fun setCrownScrollSens(context: Context, v: Float) {
+        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+            .edit()
+            .putFloat(KEY_CROWN_SCROLL_SENS, v.coerceIn(0.5f, 3f))
+            .apply()
+    }
+
+    /** 专辑流表冠惯性倍率（0.5 ~ 3.0，默认 1 = 官方默认惯性） */
+    fun getCrownFling(context: Context): Float =
+        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+            .getFloat(KEY_CROWN_FLING, 1f)
+            .coerceIn(0.5f, 3f)
+
+    fun setCrownFling(context: Context, v: Float) {
+        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+            .edit()
+            .putFloat(KEY_CROWN_FLING, v.coerceIn(0.5f, 3f))
+            .apply()
+    }
+
     // ---------------- 自定义在线音源（网易云接口兼容） ----------------
 
     private const val KEY_MUSIC_SOURCES = "music_sources"
