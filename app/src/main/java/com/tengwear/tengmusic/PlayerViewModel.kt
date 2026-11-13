@@ -159,6 +159,14 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     private val _crownFling = MutableStateFlow(SettingsRepository.getCrownFling(getApplication()))
     val crownFling = _crownFling.asStateFlow()
 
+    /** 专辑流每翻一张专辑的震动时长（ms，5 ~ 40，默认 12） */
+    private val _flowBuzzMs = MutableStateFlow(SettingsRepository.getFlowBuzzDuration(getApplication()))
+    val flowBuzzMs = _flowBuzzMs.asStateFlow()
+
+    /** 专辑流翻页震动强度（%，10 ~ 100，默认 100 = 系统默认强度） */
+    private val _flowBuzzStrength = MutableStateFlow(SettingsRepository.getFlowBuzzStrength(getApplication()))
+    val flowBuzzStrength = _flowBuzzStrength.asStateFlow()
+
     /**
      * 进度条样式：0 = 圆环（默认），1 = 波浪圆环（M3E 官方
      * CircularWavyProgressIndicator 同款：轨道平弧 + 进度正弦波沿弧流动）。
@@ -1034,6 +1042,16 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     fun setCrownFling(v: Float) {
         _crownFling.value = v.coerceIn(0.5f, 3f)
         SettingsRepository.setCrownFling(getApplication(), v)
+    }
+
+    fun setFlowBuzzMs(ms: Int) {
+        _flowBuzzMs.value = ms.coerceIn(5, 40)
+        SettingsRepository.setFlowBuzzDuration(getApplication(), ms)
+    }
+
+    fun setFlowBuzzStrength(pct: Int) {
+        _flowBuzzStrength.value = pct.coerceIn(10, 100)
+        SettingsRepository.setFlowBuzzStrength(getApplication(), pct)
     }
 
     /** 切换进度条样式（0 = 圆环，1 = 波浪） */

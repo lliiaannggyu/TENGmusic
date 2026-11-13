@@ -590,6 +590,41 @@ fun AudioSettingsScreen(
                         )
                     }
                 }
+                // 专辑流翻页震动：时长 + 强度（默认 12ms / 100%）
+                item {
+                    val flowBuzzMs by vm.flowBuzzMs.collectAsState()
+                    Column(
+                        Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text("专辑流震动时长 ${flowBuzzMs}ms", fontSize = 11.sp, color = accent)
+                        Slider(
+                            value = flowBuzzMs.toFloat(),
+                            onValueChange = { vm.setFlowBuzzMs(it.toInt()) },
+                            steps = 6,
+                            valueRange = 5f..40f,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = accentSliderColors(accent),
+                        )
+                    }
+                }
+                item {
+                    val flowBuzzStrength by vm.flowBuzzStrength.collectAsState()
+                    Column(
+                        Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text("专辑流震动强度 $flowBuzzStrength%", fontSize = 11.sp, color = accent)
+                        Slider(
+                            value = flowBuzzStrength.toFloat(),
+                            onValueChange = { vm.setFlowBuzzStrength(it.toInt()) },
+                            steps = 8,
+                            valueRange = 10f..100f,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = accentSliderColors(accent),
+                        )
+                    }
+                }
                 }
 
                 // ========== 歌词（字号 / 颜色，默认折叠）==========

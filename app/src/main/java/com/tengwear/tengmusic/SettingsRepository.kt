@@ -186,6 +186,37 @@ object SettingsRepository {
             .apply()
     }
 
+    // ---------------- 专辑流翻页震动（时长 / 强度） ----------------
+
+    private const val KEY_FLOW_BUZZ_MS = "flow_buzz_ms"
+    private const val KEY_FLOW_BUZZ_AMP = "flow_buzz_amp"
+
+    /** 专辑流每翻一张专辑的震动时长（ms，5 ~ 40，默认 12） */
+    fun getFlowBuzzDuration(context: Context): Int =
+        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+            .getInt(KEY_FLOW_BUZZ_MS, 12)
+            .coerceIn(5, 40)
+
+    fun setFlowBuzzDuration(context: Context, ms: Int) {
+        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+            .edit()
+            .putInt(KEY_FLOW_BUZZ_MS, ms.coerceIn(5, 40))
+            .apply()
+    }
+
+    /** 专辑流翻页震动强度（%，10 ~ 100，默认 100 = 系统默认强度） */
+    fun getFlowBuzzStrength(context: Context): Int =
+        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+            .getInt(KEY_FLOW_BUZZ_AMP, 100)
+            .coerceIn(10, 100)
+
+    fun setFlowBuzzStrength(context: Context, pct: Int) {
+        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+            .edit()
+            .putInt(KEY_FLOW_BUZZ_AMP, pct.coerceIn(10, 100))
+            .apply()
+    }
+
     // ---------------- 自定义在线音源（网易云接口兼容） ----------------
 
     private const val KEY_MUSIC_SOURCES = "music_sources"

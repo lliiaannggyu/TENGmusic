@@ -36,6 +36,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -106,6 +107,13 @@ fun AlbumCoverFlow(
     // 马达（每翻一张专辑时同步震动）。系统默认的连续表冠震动已在 rotaryScrollable 关闭，
     // 这里接管为「每翻一张才震一下」，与翻页视觉融洽、不各弄各的。
     val vibrator = remember { context.getSystemService(Vibrator::class.java) }
+    // 震动时长 / 强度（设置页「播放器外观」可调）；放 holder，变化时无需重启轮询
+    val buzzMs by vm.flowBuzzMs.collectAsState()
+    val buzzStrength by vm.flowBuzzStrength.collectAsState()
+    val buzzMsHolder = remember { mutableIntStateOf(12) }
+    buzzMsHolder.value = buzzMs
+    val buzzAmpHolder = remember { mutableIntStateOf(255) }
+    buzzAmpHolder.value = (255 * buzzStrength / 100).coerceIn(1, 255)
     // 开屏自动定位（scrollToItem）时压住震动，避免一打开就莫名震一下
     val buzzSuppressUntil = remember { mutableStateOf(0L) }
 
@@ -144,7 +152,7 @@ fun AlbumCoverFlow(
                 // 每翻一张专辑 → 触发一次马达短震，与翻页视觉同步。
                 // 开屏自动定位的 700ms 静默窗口内不打，避免误震。
                 if (System.currentTimeMillis() >= buzzSuppressUntil.value) {
-                    buzz(vibrator)
+                    buzz(vibrator, buzzMsHolder.value, buzzAmpHolder.value)
                 }
             }
             // 兜底归中：表冠滚动用的是 RotaryScrollableDefaults.behavior（连续滚动、
@@ -330,16 +338,17 @@ fun AlbumCoverFlow(
 }
 
 /**
- * 触发一次短促马达震动（约 12ms），用于每翻一张专辑时的触觉反馈。
+ * 触发一次短促马达震动（时长/强度可在设置页自定义，默认 12ms / 默认强度），
+ * 用于每翻一张专辑时的触觉反馈。
  * 与封面翻到居中的视觉瞬间对齐，让表冠旋转和马达震动融洽、不各弄各的。
  */
 @Suppress("DEPRECATION")
-private fun buzz(vibrator: Vibrator?) {
+private fun buzz(vibrator: Vibrator?, durationMs: Int, amplitude: Int) {
     if (vibrator == null) return
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-        vibrator.vibrate(VibrationEffect.createOneShot(12, VibrationEffect.DEFAULT_AMPLITUDE))
+        vibrator.vibrate(VibrationEffect.createOneShot(durationMs.toLong(), amplitude))
     } else {
-        vibrator.vibrate(12)
+        vibrator.vibrate(durationMs.toLong())
     }
 }
 
