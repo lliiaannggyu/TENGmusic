@@ -866,16 +866,21 @@ private fun WavyDial(
         ),
         label = "wavePhase",
     )
+    // v1.43：暂停时波幅收到 0 → 整体变回正圆（播放/暂停间平滑过渡）
+    val ampF by animateFloatAsState(
+        targetValue = if (isPlaying) 1f else 0f,
+        animationSpec = tween(durationMillis = 450),
+        label = "waveAmp",
+    )
     Canvas(modifier.size(dialSize)) {
         val c = center
         val R = size.minDimension / 2f
         val lobes = 10                          // 波瓣数（与参考图一致）
         val rt = R * 0.825f                     // 轨道中心线基准半径
-        val amp = rt * 0.105f                   // 波幅（轨道与色块共用同一绝对波幅 → 严格平行）
-        val strokeW = R * 0.058f                // 轨道线宽
-        val gap = R * 0.045f                    // 色块边缘与轨道内缘的暗缝（恒定）
+        val amp = rt * 0.068f                   // 波幅（v1.43 调矮；轨道与色块共用 → 严格平行）
+        val strokeW = R * 0.082f                // 轨道线宽（v1.43 加粗）
+        val gap = R * 0.04f                     // 色块边缘与轨道内缘的暗缝（恒定）
         val offset = strokeW / 2f + gap         // 色块边缘 = 波浪线内移量
-        val ampF = if (isPlaying) 1f else 0.72f // 暂停时波幅收敛（轨道与色块同步收敛 → 仍平行）
         val phi = phase * 2f * kotlin.math.PI.toFloat()
         val n = 240                             // 每条路径采样点数（足够平滑）
         val step = 2f * kotlin.math.PI.toFloat() / n

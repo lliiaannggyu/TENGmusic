@@ -46,6 +46,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.rotary.onRotaryScrollEvent
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
@@ -931,6 +932,32 @@ fun AudioSettingsScreen(
                     ) {
                         Text("播放器 UI", fontSize = 11.sp)
                         Text("M3E（Material 3 Expressive）", fontSize = 9.sp)
+                    }
+                }
+
+                // 应用内感谢：支持作者入口（点按跳转 GitHub 仓库）
+                item {
+                    val ctx = LocalContext.current
+                    Card(
+                        onClick = {
+                            try {
+                                ctx.startActivity(
+                                    android.content.Intent(
+                                        android.content.Intent.ACTION_VIEW,
+                                        android.net.Uri.parse(
+                                            "https://github.com/lliiaannggyu/TENGmusic"
+                                        )
+                                    ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                )
+                            } catch (_: Exception) {
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(percent = 50),
+                        colors = accentCardColors(accent),
+                    ) {
+                        Text("感谢使用 TENGMUSIC ❤", fontSize = 11.sp)
+                        Text("点按打开 GitHub 仓库 · 喜欢请点个 Star ⭐", fontSize = 9.sp)
                     }
                 }
 
