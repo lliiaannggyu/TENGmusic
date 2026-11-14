@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Pause
@@ -382,19 +383,27 @@ fun WearPlayerScreen(
                                     //   三层周期必须严格相等才不会慢慢转开：盘 9.42/4.71×8000 = 16000ms 整；
                                     //   环/弧 17.75/8.875×8000 = 16000ms 整（8.88 会得 15996ms，长期漂移错瓣）。
                                     val p: Float = playSize.value
-                                    // 盘（色块）缩至 0.885：Morph(circle8→star8) 顶点方向半径恒定，
-                                    // 盘外缘峰 = 24×scale；轨道内缘峰 = 21.23×0.023p = 0.488p。
-                                    // 0.885 → 盘峰 0.469p，与轨道内缘留 ~0.02p 缝，任何相位都不超出。
-                                    val scaleDisc: Float = 0.885f * p / 45.28f
+                                    // ① 实心波浪盘的正确画法（v1.40）：官方组件波幅 ∝ 路径中心线半径
+                                    // = 0.5×(48-stroke)。此前用 stroke=24 超粗描边画实心盘，中心线半径
+                                    // 被压到 12，波幅只剩 ±2.9% → 视觉上就是正圆（真机截图实测确认）。
+                                    // 现改为「实心圆垫底 + 细描边(stroke=6)波浪环勾边」：
+                                    //   波浪环中心线半径 21 → 外缘波幅 ±5.5px，波浪边清晰可见；
+                                    //   scale = 0.85×scaleRing → 外缘峰 20.4 / 谷 18.35（环单位），
+                                    //   恒在进度条内缘（峰 21.23 / 谷 18.63）内侧，缝 0.28~0.83 恒为正，
+                                    //   与进度条同波形（同 8 瓣圆角星 Morph）同相位同周期 16000ms 完全同步。
+                                    val scaleDisc: Float = 0.85f * 0.0230f * p
+                                    // 底层实心圆：半径 16.8 环单位，落在波浪环描边带（内缘峰 15.3 ~
+                                    // 外缘谷 18.35）之内 → 与波浪环同色无缝拼成实心盘，任何波幅参数下
+                                    // 都不会露出圆边、也不会超出波浪环外缘
+                                    val discFillSize: Dp = (0.7728f * p).dp
                                     // 轨道半径收紧：中心径从 0.71p 缩到 0.52p，紧贴盘面（贴合）
                                     val scaleRing: Float = 0.0230f * p
-                                    val strokeDisc: Float = with(density) { 24.dp.toPx() }
+                                    val strokeDisc: Float = with(density) { 6.dp.toPx() }
                                     val strokeRing: Float = with(density) { 2.77.dp.toPx() }
                                     // 外框收紧（原 1.51 → 1.14），波浪进度条整体更小
                                     val ringBox: Dp = playSize * 1.14f
-                                    // 环 + 进度弧 + 盘（色块）三者共用同一波幅：
-                                    // 色块边缘波形与进度条完全同形（同瓣数/同相位/同幅度），
-                                    // 波峰永远平行贴合进度条的波浪，又始终留在轨道内、不超出
+                                    // 环 + 进度弧 + 盘（勾边波浪环）三者共用同一波幅：
+                                    // 波形完全同形（同瓣数/同相位/同幅度），永远同步起伏旋转
                                     val ringAmp: (Float) -> Float = { if (isPlaying) 1.2f else 0.9f }
                                     val discAmp: (Float) -> Float = ringAmp
                                     // 盘面为不透明主题色 → 图标按亮度取深 teal / 白
@@ -410,7 +419,15 @@ fun WearPlayerScreen(
                                             .animateWidth(playIS),
                                         contentAlignment = Alignment.Center,
                                     ) {
-                                        // ① 实心波浪盘（stroke 24 → 内缘 -2，中心无孔）
+                                        // ①a 实心圆垫底（边缘藏在 ①b 波浪环的描边带里，拼成实心波浪盘）
+                                        Spacer(
+                                            modifier = Modifier
+                                                .align(Alignment.Center)
+                                                .size(discFillSize)
+                                                .background(themeColor, CircleShape)
+                                        )
+                                        // ①b 波浪环勾边（stroke=6，λ=16.49 → 8 瓣，波幅可见，
+                                        //     周期 = λ/波速×1000×8 = 16000ms 与进度条严格同步）
                                         CircularWavyProgressIndicator(
                                             progress = { 1f },
                                             modifier = Modifier
@@ -422,8 +439,8 @@ fun WearPlayerScreen(
                                             stroke = Stroke(strokeDisc, cap = StrokeCap.Round),
                                             trackStroke = Stroke(strokeDisc, cap = StrokeCap.Round),
                                             amplitude = discAmp,
-                                            wavelength = 9.42.dp,
-                                            waveSpeed = 4.71.dp,
+                                            wavelength = 16.49.dp,
+                                            waveSpeed = 8.245.dp,
                                             gapSize = 0.dp,
                                         )
                                         // ② 整圈波浪轨道
@@ -461,9 +478,9 @@ fun WearPlayerScreen(
                                         PlayPauseButton(
                                             isPlaying = isPlaying,
                                             onToggle = vm::togglePlay,
-                                            // 缩至 0.9p：给色块的波浪边留出露出空间（盘峰 0.469p 半径 >
-                                            // 按钮 0.45p 半径），按钮周围能看到一圈随进度条起伏的波浪边
-                                            size = playSize * 0.9f,
+                                            // 缩至 0.74p：按钮收进实心圆（半径 0.386p）之内，
+                                            // 周围露出一圈随进度条同步起伏旋转的波浪边
+                                            size = playSize * 0.74f,
                                             pill = false,
                                             background = playBg,
                                             iconColor = wavyIcon,
