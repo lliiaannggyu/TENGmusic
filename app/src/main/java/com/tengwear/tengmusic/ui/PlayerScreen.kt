@@ -4,7 +4,14 @@ import android.graphics.RenderEffect
 import android.graphics.Shader
 import android.os.Build
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
@@ -68,8 +75,10 @@ import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asComposeRenderEffect
+import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
@@ -382,28 +391,13 @@ fun WearPlayerScreen(
                                     //   λ = 2πr/8（锁 8 瓣）；旋转周期 = λ/waveSpeed×1000×瓣数（源码公式）。
                                     //   三层周期必须严格相等才不会慢慢转开：盘 9.42/4.71×8000 = 16000ms 整；
                                     //   环/弧 17.75/8.875×8000 = 16000ms 整（8.88 会得 15996ms，长期漂移错瓣）。
-                                    val p: Float = playSize.value
-                                    // ① 实心波浪盘（v1.41）＝进度条波形「等比例缩小」直接套进色块：
-                                    //   ①c 勾边环就是 ② 轨道的完整等比复制（同 stroke=2.77 / 同 λ=17.75 /
-                                    //   同波速 8.875 / 同波幅 → 同 8 瓣圆角星、同线宽×0.86、同波深×0.86、
-                                    //   同相位、同周期 16000ms），scale = 0.86×scaleRing；
-                                    //   外缘缝 = 22.615f×0.14 − 1.385×1.86 ∈ [0.22, 0.59] 恒为正
-                                    //   → 与进度条始终贴合且永不钻到进度条底下；
-                                    //   ①b 隐藏填充环（stroke=6、λ=16.49→8瓣、scale=0.81）补 ①c 内缘
-                                    //   波峰处的楔形缺口；①a 实心圆（半径16环单位）收底。
-                                    //   三层同波形同相位 → 任意时刻都无缝、且不露出勾边环外缘。
-                                    val scaleDiscEdge: Float = 0.86f * 0.0230f * p
-                                    val scaleDiscFill: Float = 0.81f * 0.0230f * p
-                                    val discCoreSize: Dp = (0.736f * p).dp
-                                    // 轨道半径收紧：中心径从 0.71p 缩到 0.52p，紧贴盘面（贴合）
-                                    val scaleRing: Float = 0.0230f * p
-                                    val strokeDiscFill: Float = with(density) { 6.dp.toPx() }
-                                    val strokeRing: Float = with(density) { 2.77.dp.toPx() }
-                                    // 外框收紧（原 1.51 → 1.14），波浪进度条整体更小
-                                    val ringBox: Dp = playSize * 1.14f
-                                    // 环 + 进度弧 + 盘（勾边/填充环）全部共用同一波幅 → 波形完全同形同步
-                                    val ringAmp: (Float) -> Float = { if (isPlaying) 1.2f else 0.9f }
-                                    val discAmp: (Float) -> Float = ringAmp
+                                    // 波浪转盘 v1.42：彻底放弃官方组件拼凑（四层各自为政永远融不到一起），
+                                    // 改为单个 Canvas 手绘 —— 色块边缘 / 波浪轨道 / 进度弧全部由
+                                    // **同一个波形函数 r(θ) = rt + amp·cos(k(θ−φ))** 生成：
+                                    //   色块边缘 = 波浪线恒定径向内移 (线宽/2 + 缝隙) → 与轨道**逐点平行**，
+                                    //   同瓣数/同波幅/同相位/同转速，数学上保证完美贴合、永不相交。
+                                    // 参考图实测：轨道中心径 259、宽 19、盘与轨道暗缝约 11px —— 本实现按同比例。
+                                    val dialBox: Dp = playSize * 1.14f
                                     // 盘面为不透明主题色 → 图标按亮度取深 teal / 白
                                     val wavyIcon: Color =
                                         if (themeColor.luminance() > 0.4f) {
@@ -413,89 +407,22 @@ fun WearPlayerScreen(
                                         }
                                     Box(
                                         modifier = Modifier
-                                            .size(ringBox)
+                                            .size(dialBox)
                                             .animateWidth(playIS),
                                         contentAlignment = Alignment.Center,
                                     ) {
-                                        // ①a 实心圆收底（边缘藏在 ①b 填充环的描边带里）
-                                        Spacer(
-                                            modifier = Modifier
-                                                .align(Alignment.Center)
-                                                .size(discCoreSize)
-                                                .background(themeColor, CircleShape)
-                                        )
-                                        // ①b 隐藏填充环（stroke=6，λ=16.49 → 8 瓣，周期 16000ms，
-                                        //     外缘恒落在 ①c 勾边环描边带之内，只负责补楔形缺口）
-                                        CircularWavyProgressIndicator(
-                                            progress = { 1f },
-                                            modifier = Modifier
-                                                .align(Alignment.Center)
-                                                .scale(scaleDiscFill)
-                                                .rotate(-90f),
-                                            color = themeColor,
-                                            trackColor = Color.Transparent,
-                                            stroke = Stroke(strokeDiscFill, cap = StrokeCap.Round),
-                                            trackStroke = Stroke(strokeDiscFill, cap = StrokeCap.Round),
-                                            amplitude = discAmp,
-                                            wavelength = 16.49.dp,
-                                            waveSpeed = 8.245.dp,
-                                            gapSize = 0.dp,
-                                        )
-                                        // ①c 勾边环 = ② 进度条轨道的等比复制（同 stroke/λ/波速/波幅，
-                                        //     scale×0.86）→ 色块边缘波形与进度条完全等比例、完全融洽
-                                        CircularWavyProgressIndicator(
-                                            progress = { 1f },
-                                            modifier = Modifier
-                                                .align(Alignment.Center)
-                                                .scale(scaleDiscEdge)
-                                                .rotate(-90f),
-                                            color = themeColor,
-                                            trackColor = Color.Transparent,
-                                            stroke = Stroke(strokeRing, cap = StrokeCap.Round),
-                                            trackStroke = Stroke(strokeRing, cap = StrokeCap.Round),
-                                            amplitude = discAmp,
-                                            wavelength = 17.75.dp,
-                                            waveSpeed = 8.875.dp,
-                                            gapSize = 0.dp,
-                                        )
-                                        // ② 整圈波浪轨道
-                                        CircularWavyProgressIndicator(
-                                            progress = { 1f },
-                                            modifier = Modifier
-                                                .align(Alignment.Center)
-                                                .scale(scaleRing)
-                                                .rotate(-90f),
-                                            color = Color(0x66FFFFFF),
-                                            trackColor = Color.Transparent,
-                                            stroke = Stroke(strokeRing, cap = StrokeCap.Round),
-                                            trackStroke = Stroke(strokeRing, cap = StrokeCap.Round),
-                                            amplitude = ringAmp,
-                                            wavelength = 17.75.dp,
-                                            waveSpeed = 8.875.dp,
-                                            gapSize = 0.dp,
-                                        )
-                                        // ③ 进度弧：与②同几何 → 波形精确重合，12 点起顺时针变长
-                                        CircularWavyProgressIndicator(
+                                        WavyDial(
+                                            dialSize = dialBox,
                                             progress = { animatedProgress },
-                                            modifier = Modifier
-                                                .align(Alignment.Center)
-                                                .scale(scaleRing)
-                                                .rotate(-90f),
-                                            color = themeColor,
-                                            trackColor = Color.Transparent,
-                                            stroke = Stroke(strokeRing, cap = StrokeCap.Round),
-                                            trackStroke = Stroke(strokeRing, cap = StrokeCap.Round),
-                                            amplitude = ringAmp,
-                                            wavelength = 17.75.dp,
-                                            waveSpeed = 8.875.dp,
-                                            gapSize = 0.dp,
+                                            isPlaying = isPlaying,
+                                            accent = themeColor,
                                         )
                                         PlayPauseButton(
                                             isPlaying = isPlaying,
                                             onToggle = vm::togglePlay,
-                                            // 缩至 0.81p：按钮收进色块外缘（最小半径 0.423p）之内，
-                                            // 周围露出一圈与进度条等比例起伏旋转的波浪边
-                                            size = playSize * 0.81f,
+                                            // 缩至 0.68p：按钮收进色块最窄处（谷径 ≈ 0.38p）之内，
+                                            // 周围露出一圈与轨道逐点平行的波浪边
+                                            size = playSize * 0.68f,
                                             pill = false,
                                             background = playBg,
                                             iconColor = wavyIcon,
@@ -905,5 +832,93 @@ private fun TriSection(
             tint = tint,
             modifier = Modifier.size(18.dp),
         )
+    }
+}
+
+/**
+ * 一体化波浪转盘（v1.42）：实心波浪色块 + 波浪轨道 + 骑轨进度弧。
+ *
+ * 三层全部由同一个波形函数生成，色块边缘 = 轨道波浪线**恒定径向内移**：
+ *
+ *   r(θ) = rt + amp · cos(k(θ − φ))     ← 轨道中心线（进度弧骑在其上）
+ *   盘边缘(θ) = r(θ) − 线宽/2 − 缝隙     ← 与轨道逐点平行，任何相位都不相交
+ *
+ * 因此色块边缘与进度条是严格平行的两条同形波浪线（同瓣数/同波幅/同相位），
+ * 整体以 16s/圈匀速旋转；暂停时波幅收敛（×0.72），恢复播放时重新张开。
+ *
+ * 比例参照用户提供的参考图实测：轨道宽 ≈ 中心径 7.3%，盘-轨道暗缝 ≈ 半径 4%。
+ */
+@Composable
+private fun WavyDial(
+    dialSize: Dp,
+    progress: () -> Float,
+    isPlaying: Boolean,
+    accent: Color,
+    modifier: Modifier = Modifier,
+) {
+    // 波形旋转相位：16s/圈线性循环（暂停时继续转，三层永远同步）
+    val phase by rememberInfiniteTransition(label = "wavePhase").animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 16000, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart,
+        ),
+        label = "wavePhase",
+    )
+    Canvas(modifier.size(dialSize)) {
+        val c = center
+        val R = size.minDimension / 2f
+        val lobes = 10                          // 波瓣数（与参考图一致）
+        val rt = R * 0.825f                     // 轨道中心线基准半径
+        val amp = rt * 0.105f                   // 波幅（轨道与色块共用同一绝对波幅 → 严格平行）
+        val strokeW = R * 0.058f                // 轨道线宽
+        val gap = R * 0.045f                    // 色块边缘与轨道内缘的暗缝（恒定）
+        val offset = strokeW / 2f + gap         // 色块边缘 = 波浪线内移量
+        val ampF = if (isPlaying) 1f else 0.72f // 暂停时波幅收敛（轨道与色块同步收敛 → 仍平行）
+        val phi = phase * 2f * kotlin.math.PI.toFloat()
+        val n = 240                             // 每条路径采样点数（足够平滑）
+        val step = 2f * kotlin.math.PI.toFloat() / n
+
+        fun waveR(theta: Float): Float = rt + amp * ampF * kotlin.math.cos(lobes * (theta - phi))
+
+        // —— ① 实心波浪色块：r = r(θ) − offset（逐点平行于轨道） ——
+        val disc = Path()
+        for (i in 0..n) {
+            val t = i * step
+            val r = waveR(t) - offset
+            val x = c.x + r * kotlin.math.cos(t)
+            val y = c.y + r * kotlin.math.sin(t)
+            if (i == 0) disc.moveTo(x, y) else disc.lineTo(x, y)
+        }
+        disc.close()
+        drawPath(disc, accent, style = Fill)
+
+        // —— ② 整圈波浪轨道 ——
+        val track = Path()
+        for (i in 0..n) {
+            val t = i * step
+            val r = waveR(t)
+            val x = c.x + r * kotlin.math.cos(t)
+            val y = c.y + r * kotlin.math.sin(t)
+            if (i == 0) track.moveTo(x, y) else track.lineTo(x, y)
+        }
+        drawPath(track, Color(0x66FFFFFF), style = Stroke(strokeW, cap = StrokeCap.Round))
+
+        // —— ③ 进度弧：同一中心线，12 点起顺时针绘制 progress 比例 ——
+        val frac = progress().coerceIn(0f, 1f)
+        if (frac > 0.002f) {
+            val arc = Path()
+            val sweep = frac * 2f * kotlin.math.PI.toFloat()
+            val m = (n * frac).toInt().coerceAtLeast(2)
+            for (i in 0..m) {
+                val t = -kotlin.math.PI.toFloat() / 2f + sweep * i / m
+                val r = waveR(t)
+                val x = c.x + r * kotlin.math.cos(t)
+                val y = c.y + r * kotlin.math.sin(t)
+                if (i == 0) arc.moveTo(x, y) else arc.lineTo(x, y)
+            }
+            drawPath(arc, accent, style = Stroke(strokeW, cap = StrokeCap.Round))
+        }
     }
 }
