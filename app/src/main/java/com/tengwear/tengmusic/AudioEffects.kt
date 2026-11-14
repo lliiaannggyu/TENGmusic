@@ -30,6 +30,13 @@ class EqualizerManager(private val priority: Int = DEFAULT_PRIORITY) {
 
     private var equalizer: Equalizer? = null
 
+    // ---------------- 挂载前调节暂存（v1.44 修复「EQ 调了没效果」）----------------
+    // 时序坑：均衡器要等播放开始（onAudioSessionIdChanged）才挂载，用户若在挂载前
+    // 调节增益/开关，此前直接被丢弃 → 滑杆在动、音频链路没变化。现把挂载前的
+    // 所有调节暂存，setup 成功后立刻全部重放，保证任何时序下调节都生效。
+    private val pendingGains = mutableMapOf<Int, Int>()
+    private var pendingEnabled: Boolean? = null
+
     /** 当前挂载的音频会话 id；0 表示未挂载 */
     @Volatile
     var audioSessionId: Int = 0
@@ -99,6 +106,18 @@ class EqualizerManager(private val priority: Int = DEFAULT_PRIORITY) {
             audioSessionId = sessionId
             isReady = true
             isEnabled = true
+            // 重放挂载前的暂存调节（增益 → 开关），保证早于挂载的设置生效
+            try {
+                pendingGains.forEach { (b, v) ->
+                    if (b in 0 until n) {
+                        eq.setBandLevel(b.toShort(), v.coerceIn(minLevel, maxLevel).toShort())
+                    }
+                }
+                pendingEnabled?.let { eq.enabled = it; isEnabled = it }
+            } catch (_: Throwable) {
+            }
+            pendingGains.clear()
+            pendingEnabled = null
         } catch (t: Throwable) {
             equalizer = null
             reset()
@@ -131,6 +150,11 @@ class EqualizerManager(private val priority: Int = DEFAULT_PRIORITY) {
     /** 动态启用/禁用均衡器（部分设备不支持动态开关，失败时静默降级） */
     fun setEnabled(on: Boolean) {
         isEnabled = on
+        if (!isReady) {
+            // 未挂载：暂存，挂载后自动应用
+            pendingEnabled = on
+            return
+        }
         try {
             equalizer?.enabled = on
         } catch (_: Throwable) {
@@ -150,7 +174,12 @@ class EqualizerManager(private val priority: Int = DEFAULT_PRIORITY) {
 
     /** 设置某频段增益（millibel，自动夹取到设备允许范围） */
     fun setBandLevel(band: Int, millibel: Int) {
-        if (!isReady || band !in 0 until bandCount) return
+        if (band !in 0 until maxOf(bandCount, MAX_BANDS)) return
+        if (!isReady) {
+            // 未挂载：暂存，挂载后自动应用（修复「EQ 调了没效果」的时序 bug）
+            pendingGains[band] = millibel
+            return
+        }
         val v = millibel.coerceIn(minLevel, maxLevel)
         try {
             equalizer?.setBandLevel(band.toShort(), v.toShort())

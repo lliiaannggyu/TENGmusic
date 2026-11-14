@@ -76,6 +76,11 @@ import androidx.wear.compose.material3.Slider
 import androidx.wear.compose.material3.SliderDefaults
 import androidx.wear.compose.material3.Text
 import com.tengwear.tengmusic.BuildConfig
+import com.tengwear.tengmusic.Updater
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import androidx.compose.runtime.rememberCoroutineScope
 import com.tengwear.tengmusic.EqPresets
 import com.tengwear.tengmusic.PlayerViewModel
 import com.tengwear.tengmusic.SettingsRepository
@@ -932,6 +937,99 @@ fun AudioSettingsScreen(
                     ) {
                         Text("播放器 UI", fontSize = 11.sp)
                         Text("M3E（Material 3 Expressive）", fontSize = 9.sp)
+                    }
+                }
+
+                // 应用内更新（v1.44）：走 GitHub Releases API 检查新版本，一键下载 APK
+                item {
+                    var checking by remember { mutableStateOf(false) }
+                    var update by remember { mutableStateOf<Updater.UpdateInfo?>(null) }
+                    var upToDate by remember { mutableStateOf(false) }
+                    var netErr by remember { mutableStateOf(false) }
+                    val scope = rememberCoroutineScope()
+                    val ctx = LocalContext.current
+                    Card(
+                        onClick = {
+                            when {
+                                checking -> return@Card
+                                // 已发现新版本 → 再次点按 = 下载 APK（系统 DownloadManager，
+                                // 完成后通知栏可见，点开安装即可覆盖升级）
+                                update != null -> {
+                                    try {
+                                        val req = android.app.DownloadManager.Request(
+                                            android.net.Uri.parse(update!!.downloadUrl)
+                                        )
+                                            .setTitle("TENGMUSIC v${update!!.latestVersion}.apk")
+                                            .setDescription("下载完成后在通知栏点开安装")
+                                            .setNotificationVisibility(
+                                                android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED
+                                            )
+                                            .setDestinationInExternalPublicDir(
+                                                android.os.Environment.DIRECTORY_DOWNLOADS,
+                                                "TENGMUSIC-v${update!!.latestVersion}.apk"
+                                            )
+                                        (ctx.getSystemService(android.content.Context.DOWNLOAD_SERVICE)
+                                            as android.app.DownloadManager).enqueue(req)
+                                        android.widget.Toast.makeText(
+                                            ctx, "已开始下载，完成后在通知栏安装",
+                                            android.widget.Toast.LENGTH_SHORT
+                                        ).show()
+                                    } catch (_: Exception) {
+                                        // DownloadManager 失败 → 兜底用浏览器打开
+                                        try {
+                                            ctx.startActivity(
+                                                android.content.Intent(
+                                                    android.content.Intent.ACTION_VIEW,
+                                                    android.net.Uri.parse(update!!.downloadUrl)
+                                                ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                            )
+                                        } catch (_: Exception) {
+                                        }
+                                    }
+                                }
+                                else -> {
+                                    checking = true; upToDate = false; netErr = false
+                                    scope.launch {
+                                        val info = withContext(Dispatchers.IO) { Updater.fetchLatest() }
+                                        checking = false
+                                        when {
+                                            info == null -> netErr = true
+                                            Updater.isNewer(
+                                                info.latestVersion,
+                                                BuildConfig.VERSION_NAME
+                                            ) -> update = info
+                                            else -> upToDate = true
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(percent = 50),
+                        colors = accentCardColors(accent),
+                    ) {
+                        when {
+                            checking -> {
+                                Text("正在检查更新…", fontSize = 11.sp)
+                                Text("连接 GitHub Releases", fontSize = 9.sp)
+                            }
+                            update != null -> {
+                                Text("发现新版本 v${update!!.latestVersion} ▼", fontSize = 11.sp)
+                                Text("点按下载 APK · 完成后通知栏安装", fontSize = 9.sp, color = accent)
+                            }
+                            upToDate -> {
+                                Text("已是最新版本 v${BuildConfig.VERSION_NAME}", fontSize = 11.sp)
+                                Text("点按重新检查", fontSize = 9.sp)
+                            }
+                            netErr -> {
+                                Text("检查失败（网络不可用）", fontSize = 11.sp)
+                                Text("当前 v${BuildConfig.VERSION_NAME} · 点按重试", fontSize = 9.sp)
+                            }
+                            else -> {
+                                Text("检查更新", fontSize = 11.sp)
+                                Text("当前 v${BuildConfig.VERSION_NAME}", fontSize = 9.sp)
+                            }
+                        }
                     }
                 }
 
