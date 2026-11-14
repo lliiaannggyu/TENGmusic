@@ -380,17 +380,20 @@ fun WearPlayerScreen(
                                     //   轨道 stroke 2.77dp → 中心线 18.88 → scale = 0.0230P（视觉宽 0.064P，更贴合盘）
                                     //   λ = 2πr/8（锁 8 瓣）；waveSpeed = λ/2 → 两例角速度相同，波峰永不漂移
                                     val p: Float = playSize.value
-                                    val scaleDisc: Float = p / 45.28f
+                                    // 盘（色块）整体缩 4%：峰、谷同步缩小，保证贴合波形后
+                                    // 任何相位都不会超出外圈波浪进度条的内缘
+                                    val scaleDisc: Float = 0.96f * p / 45.28f
                                     // 轨道半径收紧：中心径从 0.71p 缩到 0.52p，紧贴盘面（贴合）
                                     val scaleRing: Float = 0.0230f * p
                                     val strokeDisc: Float = with(density) { 24.dp.toPx() }
                                     val strokeRing: Float = with(density) { 2.77.dp.toPx() }
                                     // 外框收紧（原 1.51 → 1.14），波浪进度条整体更小
                                     val ringBox: Dp = playSize * 1.14f
-                                    // 盘波幅加大：播放 1.7 / 暂停 1.0（暂停不再退化为圆，与环一起转动）
-                                    val discAmp: (Float) -> Float = { if (isPlaying) 1.7f else 1.0f }
-                                    // 环 + 进度弧共用，略小以保持贴合重合、波幅不过度
+                                    // 环 + 进度弧 + 盘（色块）三者共用同一波幅：
+                                    // 色块边缘波形与进度条完全同形（同瓣数/同相位/同幅度），
+                                    // 波峰永远平行贴合进度条的波浪，又始终留在轨道内、不超出
                                     val ringAmp: (Float) -> Float = { if (isPlaying) 1.2f else 0.9f }
+                                    val discAmp: (Float) -> Float = ringAmp
                                     // 盘面为不透明主题色 → 图标按亮度取深 teal / 白
                                     val wavyIcon: Color =
                                         if (themeColor.luminance() > 0.4f) {
