@@ -378,11 +378,14 @@ fun WearPlayerScreen(
                                     // 参数换算（P = 盘峰径）：
                                     //   盘   stroke 24dp → 峰 22.64 画布单位 → scale = P/45.28（内缘 -2 → 实心）
                                     //   轨道 stroke 2.77dp → 中心线 18.88 → scale = 0.0230P（视觉宽 0.064P，更贴合盘）
-                                    //   λ = 2πr/8（锁 8 瓣）；waveSpeed = λ/2 → 两例角速度相同，波峰永不漂移
+                                    //   λ = 2πr/8（锁 8 瓣）；旋转周期 = λ/waveSpeed×1000×瓣数（源码公式）。
+                                    //   三层周期必须严格相等才不会慢慢转开：盘 9.42/4.71×8000 = 16000ms 整；
+                                    //   环/弧 17.75/8.875×8000 = 16000ms 整（8.88 会得 15996ms，长期漂移错瓣）。
                                     val p: Float = playSize.value
-                                    // 盘（色块）整体缩 4%：峰、谷同步缩小，保证贴合波形后
-                                    // 任何相位都不会超出外圈波浪进度条的内缘
-                                    val scaleDisc: Float = 0.96f * p / 45.28f
+                                    // 盘（色块）缩至 0.885：Morph(circle8→star8) 顶点方向半径恒定，
+                                    // 盘外缘峰 = 24×scale；轨道内缘峰 = 21.23×0.023p = 0.488p。
+                                    // 0.885 → 盘峰 0.469p，与轨道内缘留 ~0.02p 缝，任何相位都不超出。
+                                    val scaleDisc: Float = 0.885f * p / 45.28f
                                     // 轨道半径收紧：中心径从 0.71p 缩到 0.52p，紧贴盘面（贴合）
                                     val scaleRing: Float = 0.0230f * p
                                     val strokeDisc: Float = with(density) { 24.dp.toPx() }
@@ -436,7 +439,7 @@ fun WearPlayerScreen(
                                             trackStroke = Stroke(strokeRing, cap = StrokeCap.Round),
                                             amplitude = ringAmp,
                                             wavelength = 17.75.dp,
-                                            waveSpeed = 8.88.dp,
+                                            waveSpeed = 8.875.dp,
                                             gapSize = 0.dp,
                                         )
                                         // ③ 进度弧：与②同几何 → 波形精确重合，12 点起顺时针变长
@@ -452,13 +455,15 @@ fun WearPlayerScreen(
                                             trackStroke = Stroke(strokeRing, cap = StrokeCap.Round),
                                             amplitude = ringAmp,
                                             wavelength = 17.75.dp,
-                                            waveSpeed = 8.88.dp,
+                                            waveSpeed = 8.875.dp,
                                             gapSize = 0.dp,
                                         )
                                         PlayPauseButton(
                                             isPlaying = isPlaying,
                                             onToggle = vm::togglePlay,
-                                            size = playSize,
+                                            // 缩至 0.9p：给色块的波浪边留出露出空间（盘峰 0.469p 半径 >
+                                            // 按钮 0.45p 半径），按钮周围能看到一圈随进度条起伏的波浪边
+                                            size = playSize * 0.9f,
                                             pill = false,
                                             background = playBg,
                                             iconColor = wavyIcon,
