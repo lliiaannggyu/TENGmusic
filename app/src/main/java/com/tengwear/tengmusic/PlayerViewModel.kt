@@ -907,7 +907,10 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
     fun seekToFraction(f: Float) {
         val d = _duration.value
-        if (d > 0) controller?.seekTo((d * f).toLong())
+        if (d > 0) {
+            markSeeking()
+            controller?.seekTo((d * f).toLong())
+        }
     }
 
     /**
@@ -916,6 +919,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun seekToLyric(timeMs: Long) {
         controller?.let {
+            markSeeking()
             it.seekTo(timeMs.coerceAtLeast(0L))
             if (!it.isPlaying) it.play()
         }
@@ -929,6 +933,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         val c = controller ?: return
         val d = if (c.duration > 0) c.duration else _duration.value
         val target = (c.currentPosition + deltaMs).coerceIn(0L, d.coerceAtLeast(0L))
+        markSeeking()
         c.seekTo(target)
     }
 
@@ -1066,6 +1071,21 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ---------------- EQ ----------------
+
+    /** seek 进行中标记：连续 seek 会令 ExoPlayer 短暂 BUFFERING、isPlaying 抖动，
+     *  UI 据此在调整进度时固定使用暂停（圆形）图案，避免播放/暂停形态来回切换 */
+    private val _isSeeking = MutableStateFlow(false)
+    val isSeeking = _isSeeking.asStateFlow()
+    private var seekIdleJob: Job? = null
+
+    private fun markSeeking() {
+        _isSeeking.value = true
+        seekIdleJob?.cancel()
+        seekIdleJob = viewModelScope.launch {
+            delay(600) // 最后一次 seek 后 600ms 无新 seek 才视为调整结束
+            _isSeeking.value = false
+        }
+    }
 
     fun setEqEnabled(on: Boolean) {
         _eqEnabled.value = on

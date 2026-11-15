@@ -132,6 +132,7 @@ fun WearPlayerScreen(
     val tracks by vm.tracks.collectAsState()
     val index by vm.currentIndex.collectAsState()
     val isPlaying by vm.isPlaying.collectAsState()
+    val isSeekingNow by vm.isSeeking.collectAsState()
     val position by vm.position.collectAsState()
     val duration by vm.duration.collectAsState()
     val volume by vm.volume.collectAsState()
@@ -414,15 +415,17 @@ fun WearPlayerScreen(
                                         WavyDial(
                                             dialSize = dialBox,
                                             progress = { animatedProgress },
-                                            isPlaying = isPlaying,
+                                            // 调整进度（长按切歌键 seek 等）期间固定按暂停的圆形图案，
+                                            // 顺带盖掉连续 seek 导致的 BUFFERING 播放/暂停形态抖动
+                                            isPlaying = isPlaying && !isSeekingNow,
                                             accent = themeColor,
                                         )
                                         PlayPauseButton(
                                             isPlaying = isPlaying,
                                             onToggle = vm::togglePlay,
-                                            // 缩至 0.68p：按钮收进色块最窄处（谷径 ≈ 0.38p）之内，
+                                            // 缩至 0.64p：按钮收进色块最窄处（谷径 ≈ 0.377p）之内，
                                             // 周围露出一圈与轨道逐点平行的波浪边
-                                            size = playSize * 0.68f,
+                                            size = playSize * 0.64f,
                                             pill = false,
                                             background = playBg,
                                             iconColor = wavyIcon,
@@ -877,9 +880,9 @@ private fun WavyDial(
         val R = size.minDimension / 2f
         val lobes = 10                          // 波瓣数（与参考图一致）
         val rt = R * 0.825f                     // 轨道中心线基准半径
-        val amp = rt * 0.068f                   // 波幅（v1.43 调矮；轨道与色块共用 → 严格平行）
-        val strokeW = R * 0.082f                // 轨道线宽（v1.43 加粗）
-        val gap = R * 0.04f                     // 色块边缘与轨道内缘的暗缝（恒定）
+        val amp = rt * 0.048f                   // 波幅（v1.45 再矮；轨道与色块共用 → 严格平行）
+        val strokeW = R * 0.108f                // 轨道线宽（v1.45 再加粗）
+        val gap = R * 0.072f                    // 暗缝（v1.45 加大 → 色块随之变小）
         val offset = strokeW / 2f + gap         // 色块边缘 = 波浪线内移量
         val phi = phase * 2f * kotlin.math.PI.toFloat()
         val n = 240                             // 每条路径采样点数（足够平滑）
