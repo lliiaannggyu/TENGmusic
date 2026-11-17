@@ -43,6 +43,18 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     private val _albums = MutableStateFlow<List<Album>>(emptyList())
     val albums = _albums.asStateFlow()
 
+    // ---------------- 自定义专辑 / 听歌时长（v1.47）----------------
+    /** 用户自建专辑（增删歌 / 自定义封面 / 自定义排序，本地 JSON 持久化） */
+    private val _customAlbums = MutableStateFlow<List<CustomAlbum>>(emptyList())
+    val customAlbums = _customAlbums.asStateFlow()
+
+    /** 听歌时长（trackId → 累计毫秒），version 自增驱动排行榜 UI 刷新 */
+    private var playStats: MutableMap<Long, Long> = mutableMapOf()
+    private val _playStatsVersion = MutableStateFlow(0)
+    val playStatsVersion = _playStatsVersion.asStateFlow()
+    private var lastPollPos = 0L
+    private var lastStatsSave = 0L
+
     private val _currentIndex = MutableStateFlow(-1)
     val currentIndex = _currentIndex.asStateFlow()
 
@@ -272,13 +284,127 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(Dispatchers.IO) {
             val loaded = AudioRepository.loadTracks(getApplication())
             _tracks.value = loaded
-            _albums.value = groupTracksIntoAlbums(loaded)
+            _customAlbums.value = CustomAlbumRepository.load(getApplication())
+            playStats = PlayStatsRepository.load(getApplication())
+            lastPollPos = 0L
+            _albums.value = rebuildAlbums(loaded)
             _favorites.value = FavoritesRepository.load(getApplication())
             _categories.value = CategoryRepository.load(getApplication())
             connectService()
         }
         viewModelScope.launch { poll() }
         recomputeLyricColor()
+    }
+
+    // ---------------- 专辑组装 / 自定义专辑 CRUD / 排序（v1.47）----------------
+
+    /** 专辑排序键：普通专辑 "id:<albumId>"、自定义专辑 "custom:<id>" */
+    fun albumKey(a: Album): String =
+        if (a.isCustom) "custom:${a.customId}" else "id:${a.albumId}"
+
+    /**
+     * 组装专辑流数据源：MediaStore 专辑 + 用户自定义专辑，
+     * 按用户自定义排序（order 序列）排列，未排序的按专辑名殿后。
+     */
+    private fun rebuildAlbums(loaded: List<Track> = _tracks.value): List<Album> {
+        val base = groupTracksIntoAlbums(loaded)
+        val byId = loaded.withIndex().associate { (i, t) -> t.id to i }
+        val customs = _customAlbums.value.mapNotNull { ca ->
+            val indices = ca.trackIds.mapNotNull { byId[it] }
+            if (indices.isEmpty()) null
+            else Album(
+                name = ca.name,
+                artist = "自定义专辑",
+                albumId = -1L,
+                trackIndices = indices,
+                customId = ca.id,
+                customCoverUri = ca.coverUri,
+            )
+        }
+        val all = base + customs
+        val order = getAlbumOrder(getApplication()).toMutableList()
+        val ordered = order.mapNotNull { k -> all.firstOrNull { albumKey(it) == k } } +
+            all.filter { albumKey(it) !in order }
+                .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.name })
+        return ordered
+    }
+
+    private fun refreshAlbums() {
+        _albums.value = rebuildAlbums()
+    }
+
+    /** 新建自定义专辑（空曲目），返回其 id */
+    fun addCustomAlbum(name: String): Long {
+        val id = System.currentTimeMillis()
+        val list = _customAlbums.value.toMutableList()
+        val nextOrder = (list.maxOfOrNull { it.orderIdx } ?: -1) + 1
+        list.add(CustomAlbum(id, name.trim().ifEmpty { "自定义专辑" }, null, emptyList(), nextOrder))
+        _customAlbums.value = list
+        CustomAlbumRepository.save(getApplication(), list)
+        refreshAlbums()
+        return id
+    }
+
+    fun deleteCustomAlbum(id: Long) {
+        val list = _customAlbums.value.filterNot { it.id == id }
+        _customAlbums.value = list
+        CustomAlbumRepository.save(getApplication(), list)
+        // 从排序序列里同步移除
+        val order = getAlbumOrder(getApplication())
+            .filterNot { it == "custom:$id" }
+        setAlbumOrder(getApplication(), order)
+        refreshAlbums()
+    }
+
+    fun renameCustomAlbum(id: Long, name: String) {
+        updateCustomAlbum(id) { it.copy(name = name.trim().ifEmpty { it.name }) }
+    }
+
+    fun setCustomAlbumCover(id: Long, coverUri: android.net.Uri?) {
+        updateCustomAlbum(id) { it.copy(coverUri = coverUri) }
+    }
+
+    /** 加歌到自定义专辑末尾（已存在则忽略） */
+    fun addTrackToCustomAlbum(id: Long, trackId: Long) {
+        updateCustomAlbum(id) { ca ->
+            if (trackId in ca.trackIds) ca else ca.copy(trackIds = ca.trackIds + trackId)
+        }
+    }
+
+    fun removeTrackFromCustomAlbum(id: Long, trackId: Long) {
+        updateCustomAlbum(id) { ca -> ca.copy(trackIds = ca.trackIds - trackId) }
+    }
+
+    /** 自定义专辑内歌曲上移 / 下移（inAlbumIndex 为专辑内位置） */
+    fun moveTrackInCustomAlbum(id: Long, inAlbumIndex: Int, up: Boolean) {
+        updateCustomAlbum(id) { ca ->
+            val l = ca.trackIds.toMutableList()
+            val to = if (up) inAlbumIndex - 1 else inAlbumIndex + 1
+            if (inAlbumIndex !in l.indices || to !in l.indices) ca
+            else {
+                val v = l.removeAt(inAlbumIndex); l.add(to, v); ca.copy(trackIds = l)
+            }
+        }
+    }
+
+    /** 专辑排序：把 albumKey 对应专辑上移 / 下移一位（未在序列中的先补到序列尾） */
+    fun moveAlbumOrder(key: String, up: Boolean) {
+        val order = getAlbumOrder(getApplication()).toMutableList()
+        if (key !in order) order.add(key)
+        val i = order.indexOf(key)
+        val to = if (up) i - 1 else i + 1
+        if (to in order.indices) {
+            val v = order.removeAt(i); order.add(to, v)
+        }
+        setAlbumOrder(getApplication(), order)
+        refreshAlbums()
+    }
+
+    private fun updateCustomAlbum(id: Long, transform: (CustomAlbum) -> CustomAlbum) {
+        val list = _customAlbums.value.map { if (it.id == id) transform(it) else it }
+        _customAlbums.value = list
+        CustomAlbumRepository.save(getApplication(), list)
+        refreshAlbums()
     }
 
     private fun connectService() {
@@ -308,6 +434,26 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             _position.value = c.currentPosition.coerceAtLeast(0L)
             _duration.value = if (c.duration > 0) c.duration else 0L
             _isPlaying.value = c.isPlaying
+            // 听歌时长累计（v1.47）：仅在播放且进度真实前进时计时——
+            // seek 会造成位置跳变（差值超 1200ms / 负数），一律不累计
+            val newPos = _position.value
+            val delta = newPos - lastPollPos
+            if (_isPlaying.value && delta in 1..1200) {
+                _tracks.value.getOrNull(_currentIndex.value)?.let { t ->
+                    playStats[t.id] = (playStats[t.id] ?: 0L) + delta
+                    _playStatsVersion.value++
+                }
+            }
+            lastPollPos = newPos
+            // 每 30 秒落盘一次，防止退出丢失（onCleared 也会兜底保存）
+            val now = System.currentTimeMillis()
+            if (now - lastStatsSave >= 30_000 && playStats.isNotEmpty()) {
+                lastStatsSave = now
+                val snap = playStats.toMap()
+                viewModelScope.launch(Dispatchers.IO) {
+                    PlayStatsRepository.save(getApplication(), snap)
+                }
+            }
             _volume.value = c.volume.coerceIn(0f, 1f)
             _repeatMode.value = c.repeatMode
             _shuffle.value = c.shuffleModeEnabled
@@ -684,7 +830,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(Dispatchers.IO) {
             val loaded = AudioRepository.loadTracks(getApplication())
             _tracks.value = loaded
-            _albums.value = groupTracksIntoAlbums(loaded)
+            _albums.value = rebuildAlbums(loaded)
         }
     }
 
@@ -721,7 +867,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                 // 同步重扫曲库（不走 refreshLibrary 的异步竞态），定位新歌并用原播放器播放
                 val loaded = AudioRepository.loadTracks(getApplication())
                 _tracks.value = loaded
-                _albums.value = groupTracksIntoAlbums(loaded)
+                _albums.value = rebuildAlbums(loaded)
                 val baseName = onlineFileName(song).substringBeforeLast('.')
                 var idx = if (newId >= 0) loaded.indexOfFirst { it.id == newId } else -1
                 if (idx < 0) idx = loaded.indexOfFirst { it.displayName.contains(baseName) }
@@ -1200,4 +1346,17 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         val b = brightness.coerceIn(0f, 100f)
         _dimAlpha.value = ((100f - b) / 100f * 0.95f).coerceIn(0f, 0.95f)
     }
+
+    /** 听歌时长快照（排行榜 / 统计页用；playStatsVersion 变化后重新调用） */
+    fun playStatsSnapshot(): Map<Long, Long> = playStats.toMap()
+
+    /** 应用销毁时兜底落盘听歌时长 */
+    override fun onCleared() {
+        try {
+            PlayStatsRepository.save(getApplication(), playStats.toMap())
+        } catch (_: Exception) {
+        }
+        super.onCleared()
+    }
+
 }

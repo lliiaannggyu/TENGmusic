@@ -80,8 +80,12 @@ fun FilePickerScreen(
     // 刷新计数：递增可强制重新扫描目录（放入新图后点刷新）
     var reloadKey by remember { mutableStateOf(0) }
 
-    // 进入即定位到根目录
-    LaunchedEffect(Unit) { currentFolder = root }
+    // 进入即定位到根目录；v1.47：若上次浏览过其它目录，则恢复到上次的位置
+    LaunchedEffect(Unit) {
+        val last = com.tengwear.tengmusic.getPickerLastDir(context)
+        val lastDir = last.takeIf { it.isNotEmpty() }?.let { File(it) }
+        currentFolder = if (lastDir != null && lastDir.exists() && lastDir.isDirectory) lastDir else root
+    }
 
     // 当前文件夹下的内容（子文件夹 + 图片文件），IO 线程读取
     var children by remember { mutableStateOf<List<File>>(emptyList()) }
@@ -93,6 +97,8 @@ fun FilePickerScreen(
             f.listFiles()?.toList()?.filter { it.exists() } ?: emptyList()
         }
         loading = false
+        // 记住本次浏览的目录，下次打开直接回到这里
+        com.tengwear.tengmusic.setPickerLastDir(context, f.absolutePath)
     }
 
     fun openFolder(folder: File) {

@@ -156,6 +156,7 @@ fun AudioSettingsScreen(
     onOpenCoverTool: () -> Unit = {},
     onOpenLanTransfer: () -> Unit = {},
     onOpenListenTogether: () -> Unit = {},
+    onOpenCustomAlbums: () -> Unit = {},
     active: Boolean = true,
 ) {
     val eqEnabled by vm.eqEnabled.collectAsState()
@@ -911,6 +912,17 @@ fun AudioSettingsScreen(
 
                 // ========== 7. 工具（默认展开）==========
                 collapsibleSection("工具", secTool, { secTool = !secTool }, accent) {
+                item {
+                    Card(
+                        onClick = onOpenCustomAlbums,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(percent = 50),
+                        colors = accentCardColors(accent),
+                    ) {
+                        Text("自定义专辑", fontSize = 11.sp)
+                        Text("增删歌曲 · 换封面 · 专辑流排序", fontSize = 9.sp)
+                    }
+                }
                 item {
                     Card(
                         onClick = onOpenCoverTool,

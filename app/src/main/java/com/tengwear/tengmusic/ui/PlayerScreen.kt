@@ -647,6 +647,7 @@ private fun PlayPauseButton(
         interactionSource = interactionSource,
         shapes = IconButtonDefaults.shapes(shape = RoundedCornerShape(percent = 50)),
         modifier = modifier
+            .pressPulse(interactionSource ?: remember { MutableInteractionSource() })
             .size(if (pill) size * 1.6f else size)
             .focusProperties { canFocus = false },
         colors = IconButtonDefaults.filledIconButtonColors(
@@ -720,6 +721,7 @@ private fun PrevNextButton(
         interactionSource = interactionSource,
         shapes = IconButtonDefaults.shapes(shape = RoundedCornerShape(percent = 50)),
         modifier = modifier
+            .pressPulse(interactionSource)
             .size(boxW, size)
             .focusProperties { canFocus = false },
         colors = IconButtonDefaults.filledIconButtonColors(

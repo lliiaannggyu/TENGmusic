@@ -49,57 +49,57 @@ object SettingsRepository {
     private const val KEY_LAN_COMPRESS_MB = "lan_compress_threshold_mb"
 
     fun getLyricColorMode(context: Context): Int =
-        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+        context.getSharedPreferences("tengmusic_settings", Context.MODE_PRIVATE)
             .getInt(KEY_LYRIC_COLOR_MODE, 0)
 
     fun getUiTheme(context: Context): Int =
-        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+        context.getSharedPreferences("tengmusic_settings", Context.MODE_PRIVATE)
             .getInt(KEY_UI_THEME, 0)
 
     fun getRingRadiusFrac(context: Context): Float =
-        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+        context.getSharedPreferences("tengmusic_settings", Context.MODE_PRIVATE)
             .getFloat(KEY_RING_RADIUS_FRAC, 0.47f)
             // 读取时也钳制：旧版本可能存过超出可见范围的值，迁移时拉回可见范围
             .coerceIn(0.05f, 0.50f)
 
     fun getRingStroke(context: Context): Float =
-        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+        context.getSharedPreferences("tengmusic_settings", Context.MODE_PRIVATE)
             .getFloat(KEY_RING_STROKE, 5f)
 
     fun getLyricCustomColor(context: Context): Int =
-        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+        context.getSharedPreferences("tengmusic_settings", Context.MODE_PRIVATE)
             .getInt(KEY_LYRIC_CUSTOM_COLOR, 0xFFFFFFFF.toInt())
 
     fun setLyricColorMode(context: Context, mode: Int) {
-        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+        context.getSharedPreferences("tengmusic_settings", Context.MODE_PRIVATE)
             .edit()
             .putInt(KEY_LYRIC_COLOR_MODE, mode)
             .apply()
     }
 
     fun setLyricCustomColor(context: Context, color: Int) {
-        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+        context.getSharedPreferences("tengmusic_settings", Context.MODE_PRIVATE)
             .edit()
             .putInt(KEY_LYRIC_CUSTOM_COLOR, color)
             .apply()
     }
 
     fun setUiTheme(context: Context, theme: Int) {
-        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+        context.getSharedPreferences("tengmusic_settings", Context.MODE_PRIVATE)
             .edit()
             .putInt(KEY_UI_THEME, theme)
             .apply()
     }
 
     fun setRingRadiusFrac(context: Context, frac: Float) {
-        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+        context.getSharedPreferences("tengmusic_settings", Context.MODE_PRIVATE)
             .edit()
             .putFloat(KEY_RING_RADIUS_FRAC, frac.coerceIn(0.05f, 0.50f))
             .apply()
     }
 
     fun setRingStroke(context: Context, dp: Float) {
-        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+        context.getSharedPreferences("tengmusic_settings", Context.MODE_PRIVATE)
             .edit()
             .putFloat(KEY_RING_STROKE, dp.coerceIn(2f, 12f))
             .apply()
@@ -107,23 +107,23 @@ object SettingsRepository {
 
     /** 进度条样式（0 = 圆环，1 = 波浪），默认圆环 */
     fun getProgressStyle(context: Context): Int =
-        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+        context.getSharedPreferences("tengmusic_settings", Context.MODE_PRIVATE)
             .getInt(KEY_PROGRESS_STYLE, PROGRESS_STYLE_RING)
 
     fun setProgressStyle(context: Context, style: Int) {
         val v = if (style == PROGRESS_STYLE_WAVY) PROGRESS_STYLE_WAVY else PROGRESS_STYLE_RING
-        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+        context.getSharedPreferences("tengmusic_settings", Context.MODE_PRIVATE)
             .edit()
             .putInt(KEY_PROGRESS_STYLE, v)
             .apply()
     }
 
     fun getLyricTransition(context: Context): Int =
-        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+        context.getSharedPreferences("tengmusic_settings", Context.MODE_PRIVATE)
             .getInt(KEY_LYRIC_TRANSITION, 0)
 
     fun setLyricTransition(context: Context, id: Int) {
-        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+        context.getSharedPreferences("tengmusic_settings", Context.MODE_PRIVATE)
             .edit()
             .putInt(KEY_LYRIC_TRANSITION, id)
             .apply()
@@ -131,12 +131,12 @@ object SettingsRepository {
 
     /** 歌词字号（sp），读取时钳制在手表可读范围 12 ~ 22 */
     fun getLyricFontSize(context: Context): Float =
-        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+        context.getSharedPreferences("tengmusic_settings", Context.MODE_PRIVATE)
             .getFloat(KEY_LYRIC_FONT_SIZE, 15f)
             .coerceIn(12f, 22f)
 
     fun setLyricFontSize(context: Context, sp: Float) {
-        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+        context.getSharedPreferences("tengmusic_settings", Context.MODE_PRIVATE)
             .edit()
             .putFloat(KEY_LYRIC_FONT_SIZE, sp.coerceIn(12f, 22f))
             .apply()
@@ -144,12 +144,12 @@ object SettingsRepository {
 
     /** 局域网传歌压缩阈值（MB），读取时钳制在 1 ~ 100 */
     fun getLanCompressThresholdMb(context: Context): Int =
-        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+        context.getSharedPreferences("tengmusic_settings", Context.MODE_PRIVATE)
             .getInt(KEY_LAN_COMPRESS_MB, 20)
             .coerceIn(1, 100)
 
     fun setLanCompressThresholdMb(context: Context, mb: Int) {
-        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+        context.getSharedPreferences("tengmusic_settings", Context.MODE_PRIVATE)
             .edit()
             .putInt(KEY_LAN_COMPRESS_MB, mb.coerceIn(1, 100))
             .apply()
@@ -162,12 +162,12 @@ object SettingsRepository {
 
     /** 专辑流表冠滚动速度倍率（0.5 ~ 3.0，默认 1 = 官方默认手感） */
     fun getCrownScrollSens(context: Context): Float =
-        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+        context.getSharedPreferences("tengmusic_settings", Context.MODE_PRIVATE)
             .getFloat(KEY_CROWN_SCROLL_SENS, 1f)
             .coerceIn(0.5f, 3f)
 
     fun setCrownScrollSens(context: Context, v: Float) {
-        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+        context.getSharedPreferences("tengmusic_settings", Context.MODE_PRIVATE)
             .edit()
             .putFloat(KEY_CROWN_SCROLL_SENS, v.coerceIn(0.5f, 3f))
             .apply()
@@ -175,12 +175,12 @@ object SettingsRepository {
 
     /** 专辑流表冠惯性倍率（0.5 ~ 3.0，默认 1 = 官方默认惯性） */
     fun getCrownFling(context: Context): Float =
-        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+        context.getSharedPreferences("tengmusic_settings", Context.MODE_PRIVATE)
             .getFloat(KEY_CROWN_FLING, 1f)
             .coerceIn(0.5f, 3f)
 
     fun setCrownFling(context: Context, v: Float) {
-        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+        context.getSharedPreferences("tengmusic_settings", Context.MODE_PRIVATE)
             .edit()
             .putFloat(KEY_CROWN_FLING, v.coerceIn(0.5f, 3f))
             .apply()
@@ -193,12 +193,12 @@ object SettingsRepository {
 
     /** 专辑流每翻一张专辑的震动时长（ms，5 ~ 40，默认 12） */
     fun getFlowBuzzDuration(context: Context): Int =
-        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+        context.getSharedPreferences("tengmusic_settings", Context.MODE_PRIVATE)
             .getInt(KEY_FLOW_BUZZ_MS, 12)
             .coerceIn(5, 40)
 
     fun setFlowBuzzDuration(context: Context, ms: Int) {
-        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+        context.getSharedPreferences("tengmusic_settings", Context.MODE_PRIVATE)
             .edit()
             .putInt(KEY_FLOW_BUZZ_MS, ms.coerceIn(5, 40))
             .apply()
@@ -206,12 +206,12 @@ object SettingsRepository {
 
     /** 专辑流翻页震动强度（%，10 ~ 100，默认 100 = 系统默认强度） */
     fun getFlowBuzzStrength(context: Context): Int =
-        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+        context.getSharedPreferences("tengmusic_settings", Context.MODE_PRIVATE)
             .getInt(KEY_FLOW_BUZZ_AMP, 100)
             .coerceIn(10, 100)
 
     fun setFlowBuzzStrength(context: Context, pct: Int) {
-        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+        context.getSharedPreferences("tengmusic_settings", Context.MODE_PRIVATE)
             .edit()
             .putInt(KEY_FLOW_BUZZ_AMP, pct.coerceIn(10, 100))
             .apply()
@@ -224,7 +224,7 @@ object SettingsRepository {
     /** 读取全部自定义音源（存为 JSON 数组；解析失败视为空） */
     fun getMusicSources(context: Context): List<MusicSource> {
         return try {
-            val raw = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+            val raw = context.getSharedPreferences("tengmusic_settings", Context.MODE_PRIVATE)
                 .getString(KEY_MUSIC_SOURCES, null) ?: return emptyList()
             val arr = org.json.JSONArray(raw)
             (0 until arr.length()).mapNotNull { i ->
@@ -260,9 +260,38 @@ object SettingsRepository {
                 put("baseUrl", it.baseUrl)
             })
         }
-        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+        context.getSharedPreferences("tengmusic_settings", Context.MODE_PRIVATE)
             .edit()
             .putString(KEY_MUSIC_SOURCES, arr.toString())
             .apply()
     }
+}
+
+// ---------------- 专辑排序 / 文件管理器记忆目录（v1.47）----------------
+
+private const val KEY_ALBUM_ORDER = "album_order"
+private const val KEY_PICKER_LAST_DIR = "picker_last_dir"
+
+/**
+ * 专辑流 / 专辑列表的自定义排序（键序列，越靠前越靠左）。
+ * 键格式：普通专辑 "id:<albumId>"、自定义专辑 "custom:<id>"。
+ * 列表里没有的专辑按名称排在已排序项之后。
+ */
+fun getAlbumOrder(context: Context): List<String> =
+    context.getSharedPreferences("tengmusic_settings", Context.MODE_PRIVATE)
+        .getString(KEY_ALBUM_ORDER, "")?.split("|")?.filter { it.isNotBlank() } ?: emptyList()
+
+fun setAlbumOrder(context: Context, order: List<String>) {
+    context.getSharedPreferences("tengmusic_settings", Context.MODE_PRIVATE)
+        .edit().putString(KEY_ALBUM_ORDER, order.joinToString("|")).apply()
+}
+
+/** 内置文件管理器上次打开的目录（专辑封面选择等场景，每次打开接着上次的位置） */
+fun getPickerLastDir(context: Context): String =
+    context.getSharedPreferences("tengmusic_settings", Context.MODE_PRIVATE)
+        .getString(KEY_PICKER_LAST_DIR, "") ?: ""
+
+fun setPickerLastDir(context: Context, path: String) {
+    context.getSharedPreferences("tengmusic_settings", Context.MODE_PRIVATE)
+        .edit().putString(KEY_PICKER_LAST_DIR, path).apply()
 }

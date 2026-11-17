@@ -3,6 +3,7 @@ package com.tengwear.tengmusic.ui
 import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.AnimationState
@@ -47,7 +48,10 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shader
 import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.asComposeRenderEffect
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.wear.compose.foundation.rotary.RotaryScrollableDefaults
 import androidx.wear.compose.foundation.rotary.rotaryScrollable
@@ -61,8 +65,8 @@ import androidx.compose.ui.unit.sp
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.Text
 import coil.compose.AsyncImage
+import com.tengwear.tengmusic.Album
 import com.tengwear.tengmusic.PlayerViewModel
-import com.tengwear.tengmusic.Track
 import com.tengwear.tengmusic.coverflow.CoverFlow
 import com.tengwear.tengmusic.coverflow.CoverFlowParams
 import com.tengwear.tengmusic.coverflow.CoverFlowState
@@ -71,22 +75,16 @@ import kotlin.math.abs
 import kotlinx.coroutines.delay
 
 /**
- * 选曲页（iPod Classic「Cover Flow」）。
+ * 专辑选曲页（iPod Classic「Cover Flow」，v1.47 起按专辑浏览）：
+ * 一张封面 = 一张专辑（不再按单曲平铺）。
  *
- * 表冠交互说明：
- *  - 在 Wear OS 上，表冠（Rotary）事件只会派发给「拥有焦点」的节点，
- *    并且会沿着焦点树分发。
- *  - 本应用所有屏幕（播放器/歌词/设置/曲目列表/专辑/归类）统一用
- *    `rememberRotaryFocusRequester(active)`（见 Rotary.kt）：仅当页面/浮层
- *    `active` 时才 requestFocus 一次，保证「同一时刻只有一个节点持有表冠焦点」。
- *    三页横向翻页 + 专辑流叠加时，靠这个 active 开关互斥，谁也不抢谁。
- *  - 曾经误用 Wear 官方无参 `rememberActiveFocusRequester()`，它在
- *    AnimatedVisibility 叠加场景下无法把焦点放回本节点，导致专辑流表冠翻不动
- *    （其它页面此刻 active=false 已完全退焦，并非它们抢焦点）。已改回项目统一的
- *    `rememberRotaryFocusRequester(active)`，并在进入时持续确保焦点到位。
+ * 交互：
+ *  - 表冠旋转 → 每咔哒一格翻一张专辑
+ *  - 轻触侧面封面 → 滚到正中；轻触已居中的封面 → 打开该专辑的歌曲列表
+ *  - 下滑屏幕 → 返回播放页
+ *  - 打开动画：先定位到当前播放的专辑，两侧专辑从内向外依次展开（线性）
  *
- * 交互：轻触已居中的封面 → 直接播放该首歌（并关闭选曲）；轻触侧面封面 → 滚到正中。
- *      下滑屏幕 → 返回播放页。表冠旋转 → 每咔哒一格翻一张。
+ * 表冠焦点：项目统一 rememberRotaryFocusRequester(active)（详见历史注释）。
  */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -95,69 +93,58 @@ fun AlbumCoverFlow(
     modifier: Modifier = Modifier,
     sizeFraction: Float = 0.5f,
     onBack: () -> Unit = {},
+    onOpenAlbum: (Album) -> Unit = {},
     active: Boolean = true,
 ) {
     val tracks by vm.tracks.collectAsState()
+    val albums by vm.albums.collectAsState()
     val index by vm.currentIndex.collectAsState()
     val context = LocalContext.current
 
-    // 实时、可靠地算出「最靠近屏幕中心的歌曲」索引（替代库内部滞后的 selectedIndex）。
-    // 列表首尾各有一个占位 spacer，所以 列表下标 - 1 = 歌曲下标。
+    // 最靠近屏幕中心的专辑下标（列表首尾各有一个占位 spacer，列表下标 - 1 = 专辑下标）
     val centeredIndex = remember { mutableStateOf(0) }
-    // 马达（每翻一张专辑时同步震动）。系统默认的连续表冠震动已在 rotaryScrollable 关闭，
-    // 这里接管为「每翻一张才震一下」，与翻页视觉融洽、不各弄各的。
     val vibrator = remember { context.getSystemService(Vibrator::class.java) }
-    // 震动时长 / 强度（设置页「播放器外观」可调）；放 holder，变化时无需重启轮询
     val buzzMs by vm.flowBuzzMs.collectAsState()
     val buzzStrength by vm.flowBuzzStrength.collectAsState()
     val buzzMsHolder = remember { mutableIntStateOf(12) }
     buzzMsHolder.value = buzzMs
     val buzzAmpHolder = remember { mutableIntStateOf(255) }
     buzzAmpHolder.value = (255 * buzzStrength / 100).coerceIn(1, 255)
-    // 开屏自动定位（scrollToItem）时压住震动，避免一打开就莫名震一下
     val buzzSuppressUntil = remember { mutableStateOf(0L) }
 
-    // 用可空 var 持有 state，避免在 rememberCoverFlowState 的回调里引用尚未赋值的局部 val
+    // 打开动画进度：0→1 线性；两侧专辑按 |i - startAlbum| 依次展开（从内向外）
+    val openAnim = remember { Animatable(0f) }
+    var startAlbumIdx by remember { mutableIntStateOf(0) }
+
     var state: CoverFlowState? = null
     state = rememberCoverFlowState(
-        onItemClick = { index ->
+        onItemClick = { idx ->
             val s = state
-            // 点「已居中」的封面 → 直接播放该首歌并关闭选曲
-            if (s != null && index == centeredIndex.value) {
-                vm.selectTrack(index)
-                onBack()
+            if (s != null && idx == centeredIndex.value) {
+                // 点「已居中」的专辑 → 打开它的歌曲列表
+                albums.getOrNull(idx)?.let(onOpenAlbum)
             } else {
-                s?.scrollToItem(index)
+                s?.scrollToItem(idx)
             }
         }
     )
 
-    // 表冠焦点：使用项目统一的 rememberRotaryFocusRequester(active)，与所有屏幕一致。
-    // 当 active=true（专辑流显示）时抢占焦点；绝不混用 Wear 官方无参
-    // rememberActiveFocusRequester（在 AnimatedVisibility 叠加场景下无法把焦点放回本节点）。
     val focusRequester = rememberRotaryFocusRequester(active)
 
-    // 兜底归中容差：居中封面偏离视口中心超过 2dp 且静止持续多帧 → 补一次吸附
     val density = LocalDensity.current
     val snapTolerancePx = with(density) { 2.dp.toPx() }
 
     LaunchedEffect(state) {
         val listState = state?.lazyListState ?: return@LaunchedEffect
-        // 轮询布局信息，实时算出最靠近中心的歌曲下标（无需 snapshotFlow，兼容性更好）
         var stillFrames = 0
         while (true) {
-            val newIdx = computeCenteredIndex(listState, tracks.size)
+            val newIdx = computeCenteredIndex(listState, albums.size)
             if (newIdx != centeredIndex.value) {
                 centeredIndex.value = newIdx
-                // 每翻一张专辑 → 触发一次马达短震，与翻页视觉同步。
-                // 开屏自动定位的 700ms 静默窗口内不打，避免误震。
                 if (System.currentTimeMillis() >= buzzSuppressUntil.value) {
                     buzz(vibrator, buzzMsHolder.value, buzzAmpHolder.value)
                 }
             }
-            // 兜底归中：表冠滚动用的是 RotaryScrollableDefaults.behavior（连续滚动、
-            // 不带按项吸附），偶发会停在两张封面中间。滚动完全停止后若居中封面仍
-            // 偏离视口中心且持续多帧，补一次吸附，杜绝"卡在切换动画那里不回正"。
             val offPx = centerOffsetPx(listState)
             if (!listState.isScrollInProgress && abs(offPx) > snapTolerancePx) {
                 stillFrames++
@@ -172,27 +159,30 @@ fun AlbumCoverFlow(
         }
     }
 
-    // 进入专辑流时，把封面滚动到「当前正在播放」的歌曲（而非默认停在第一张）。
-    // index 是全局曲目下标（ViewModel 的 poll 已做队列映射，播过归类也不会错位）；
-    // tracks.size 一并入键：打开专辑流时曲库若还在扫描，扫描完成后再补一次定位。
-    LaunchedEffect(active, tracks.size) {
-        if (!active || tracks.isEmpty()) return@LaunchedEffect
-        // 等 Cover Flow 完成首次布局、几何参数就绪（否则 scrollToItem 算不出位移）
+    // 进入专辑流：先定位到「当前正在播放」的专辑，然后播放从内向外展开动画
+    LaunchedEffect(active, albums.size) {
+        if (!active || albums.isEmpty()) return@LaunchedEffect
         var tries = 0
         while (state?.geometry == null && tries < 100) { delay(16); tries++ }
-        val start = if (index in 0..tracks.lastIndex) index else 0
-        // 压住接下来的 700ms 震动：开屏自动定位这一步会让居中下标跳变，不该触发马达
+        // 当前播放曲目所属专辑的下标（找不到 → 0）
+        val cur = if (index in 0..tracks.lastIndex) {
+            albums.indexOfFirst { index in it.trackIndices }.coerceAtLeast(0)
+        } else 0
+        startAlbumIdx = cur
         buzzSuppressUntil.value = System.currentTimeMillis() + 700
-        state?.scrollToItem(start)
+        state?.scrollToItem(cur)
+        // 从内向外依次展开两边的专辑：动画值 = 已展开的「圈数」
+        openAnim.snapTo(0f)
+        openAnim.animateTo(1f, tween(durationMillis = 600, easing = LinearEasing))
     }
 
     Box(
         modifier = modifier.fillMaxSize().background(Color(0xFF06070A)),
         contentAlignment = Alignment.Center
     ) {
-        if (tracks.isEmpty()) {
+        if (albums.isEmpty()) {
             Text(
-                "暂无歌曲\n授权后自动扫描本地音乐",
+                "暂无专辑\n授权后自动扫描本地音乐",
                 fontSize = 12.sp,
                 color = Color.Gray,
                 textAlign = TextAlign.Center
@@ -200,23 +190,12 @@ fun AlbumCoverFlow(
             return@Box
         }
 
-        // 下滑手势累积量：向下超过阈值即返回播放页
         var dragDownAcc by remember { mutableFloatStateOf(0f) }
 
-        // 表冠：改用 Wear 官方 rotaryScrollable + RotaryScrollableDefaults.behavior ——
-        // 它内部的 FocusTargetWithSemantics 会自动抢占表冠焦点（与项目其它屏幕同一机制，
-        // 稳定可靠），彻底替代此前手写的 .focusable().onRotaryScrollEvent{}：
-        // focusable() 不会自动抢焦点、手动 requestFocus 时机难对准，正是专辑流表冠
-        // 时灵时不灵的真正根因。滚动由 CoverFlowState.lazyListState 驱动，
-        // 松手后由 LazyRow 自带的吸附 fling 把封面归中。
         val listState = state?.lazyListState
 
-        // 表冠手感（设置页「播放器外观」可调）：
-        //  - 滚动速度：包一层 ScrollableState，把表冠滚动像素按倍率放大/缩小
-        //  - 惯性：自定义 spline fling，把初始速度按倍率放大/缩小
         val crownSens by vm.crownSens.collectAsState()
         val crownFling by vm.crownFling.collectAsState()
-        // 倍率放 holder：变化时不重建 ScrollableState / FlingBehavior
         val sensHolder = remember { mutableFloatStateOf(1f) }
         sensHolder.value = crownSens
         val flingHolder = remember { mutableFloatStateOf(1f) }
@@ -232,7 +211,7 @@ fun AlbumCoverFlow(
                         val delta = value - lastValue
                         lastValue = value
                         val consumed = scrollBy(delta)
-                        if (abs(delta - consumed) > 0.5f) cancelAnimation() // 已到边界，停
+                        if (abs(delta - consumed) > 0.5f) cancelAnimation()
                     }
                     return lastValue
                 }
@@ -245,15 +224,12 @@ fun AlbumCoverFlow(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                // 官方表冠支持：自动抢占焦点 + 驱动封面滚动
                 .let { m ->
                     if (scaledListState != null) {
                         m.rotaryScrollable(
                             RotaryScrollableDefaults.behavior(
                                 scrollableState = scaledListState,
                                 flingBehavior = scaledFling,
-                                // 关闭系统默认的连续表冠震动：它每转一格就震、与专辑吸附各弄各的。
-                                // 改为在 AlbumCoverFlow 里「每翻一张专辑」单独打一次短震，才融洽。
                                 hapticFeedbackEnabled = false,
                             ),
                             focusRequester,
@@ -262,7 +238,6 @@ fun AlbumCoverFlow(
                         m
                     }
                 }
-                // 下滑返回播放页（指针事件与表冠完全独立，不会相互抢占）
                 .pointerInput(Unit) {
                     detectVerticalDragGestures(
                         onDragStart = { dragDownAcc = 0f },
@@ -285,17 +260,31 @@ fun AlbumCoverFlow(
                     mirror = true,
                 ),
             ) {
-                items(tracks) { track ->
-                    TrackArtContent(track = track)
+                items(albums.size) { i ->
+                    // 从内向外展开：距起始专辑 dist 圈的专辑，在 openAnim 推进到 dist 时开始浮现
+                    val dist = abs(i - startAlbumIdx).toFloat()
+                    val appear = ((openAnim.value * 5.5f - dist).coerceIn(0f, 1f))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer {
+                                alpha = appear
+                                val sc = 0.45f + 0.55f * appear
+                                scaleX = sc
+                                scaleY = sc
+                            }
+                    ) {
+                        AlbumArtContent(album = albums[i])
+                    }
                 }
             }
         }
 
-        // 底部居中：当前歌曲名 / 歌手 / 专辑
-        val currentTrack = tracks.getOrNull(centeredIndex.value)
+        // 底部居中：当前专辑名 / 歌手 / 曲目数
+        val currentAlbum = albums.getOrNull(centeredIndex.value)
         val nameShadow = Shadow(color = Color.Black, offset = Offset(0f, 2f), blurRadius = 4f)
-        // 居中的封面正好是播放器当前曲目 → 标题旁挂「正在播放」声波标识
-        val isNowPlaying = index in 0..tracks.lastIndex && centeredIndex.value == index
+        val isNowPlaying = currentAlbum != null && index in 0..tracks.lastIndex &&
+            index in currentAlbum.trackIndices
 
         Column(
             modifier = Modifier
@@ -305,7 +294,7 @@ fun AlbumCoverFlow(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = currentTrack?.title ?: "",
+                    text = currentAlbum?.name ?: "",
                     fontSize = 14.sp,
                     maxLines = 1,
                     textAlign = TextAlign.Center,
@@ -318,7 +307,7 @@ fun AlbumCoverFlow(
                 }
             }
             Text(
-                text = currentTrack?.artist ?: "",
+                text = currentAlbum?.artist ?: "",
                 fontSize = 10.sp,
                 maxLines = 1,
                 textAlign = TextAlign.Center,
@@ -326,22 +315,18 @@ fun AlbumCoverFlow(
                 style = TextStyle(shadow = nameShadow),
             )
             Text(
-                text = currentTrack?.album ?: "",
-                fontSize = 10.sp,
+                text = currentAlbum?.let { "${it.trackCount} 首 · 点按打开" } ?: "",
+                fontSize = 9.sp,
                 maxLines = 1,
                 textAlign = TextAlign.Center,
-                color = Color.White,
+                color = Color(0xAAFFFFFF),
                 style = TextStyle(shadow = nameShadow),
             )
         }
     }
 }
 
-/**
- * 触发一次短促马达震动（时长/强度可在设置页自定义，默认 12ms / 默认强度），
- * 用于每翻一张专辑时的触觉反馈。
- * 与封面翻到居中的视觉瞬间对齐，让表冠旋转和马达震动融洽、不各弄各的。
- */
+/** 触发一次短促马达震动（时长/强度可在设置页自定义，默认 12ms / 默认强度） */
 @Suppress("DEPRECATION")
 private fun buzz(vibrator: Vibrator?, durationMs: Int, amplitude: Int) {
     if (vibrator == null) return
@@ -352,10 +337,7 @@ private fun buzz(vibrator: Vibrator?, durationMs: Int, amplitude: Int) {
     }
 }
 
-/**
- * 根据 LazyListState 的可见项布局，找出几何中心最靠近视口中心的项，
- * 再换算成歌曲下标（列表首尾各有一个占位 spacer，故 列表下标 - 1 = 歌曲下标）。
- */
+/** 根据可见项布局找出最靠近视口中心的项，换算成专辑下标（-1 = 首尾 spacer） */
 private fun computeCenteredIndex(listState: LazyListState, count: Int): Int {
     if (count <= 0) return 0
     val layout = listState.layoutInfo
@@ -373,11 +355,7 @@ private fun computeCenteredIndex(listState: LazyListState, count: Int): Int {
     return if (best < 0) 0 else (best - 1).coerceIn(0, count - 1)
 }
 
-/**
- * 当前最靠近视口中心的项，其中心相对视口中心的像素偏移。
- * 供 AlbumCoverFlow 的兜底归中判断使用：滚动完全停止后该偏移应归零，
- * 若持续非零说明停在了两张封面中间，需要补一次吸附。
- */
+/** 当前最靠近视口中心的项相对视口中心的像素偏移（兜底归中判断用） */
 private fun centerOffsetPx(listState: LazyListState): Float {
     val layout = listState.layoutInfo
     if (layout.visibleItemsInfo.isEmpty()) return 0f
@@ -395,9 +373,9 @@ private fun centerOffsetPx(listState: LazyListState): Float {
     return bestOff
 }
 
-/** 单首歌曲封面内容：铺满方形封面 + 轻微边框 */
+/** 专辑封面内容：铺满方形封面 + 轻微边框（无封面显示音符占位） */
 @Composable
-private fun TrackArtContent(track: Track) {
+private fun AlbumArtContent(album: Album) {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -413,19 +391,15 @@ private fun TrackArtContent(track: Track) {
                 .align(Alignment.Center),
         )
         AsyncImage(
-            model = track.albumArtUri,
-            contentDescription = track.title,
+            model = album.albumArtUri,
+            contentDescription = album.name,
             modifier = Modifier.fillMaxSize(),
             contentScale = ContentScale.Crop,
         )
     }
 }
 
-/**
- * 「正在播放」声波标识：三根圆头声波柱，高度此消彼长地无限起伏。
- * 挂在专辑流底部信息行的标题旁，标记居中的封面正是播放器当前曲目。
- * 纯 Canvas 绘制，不依赖扩展图标库。
- */
+/** 「正在播放」声波标识：三根圆头声波柱，高度此消彼长地无限起伏 */
 @Composable
 private fun PlayingWave(
     modifier: Modifier = Modifier,

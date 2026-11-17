@@ -14,13 +14,19 @@ data class Album(
     val name: String,          // 专辑名
     val artist: String,        // 歌手（取专辑内首曲的歌手）
     val albumId: Long,         // 用于读取专辑封面
-    val trackIndices: List<Int> // 该专辑曲目在全局列表中的下标
+    val trackIndices: List<Int>, // 该专辑曲目在全局列表中的下标
+    val customId: Long = -1L,    // 自定义专辑 id（>= 0 表示用户自建专辑）
+    val customCoverUri: Uri? = null, // 自定义专辑的封面（优先于 MediaStore 专辑封面）
 ) {
     val trackCount: Int get() = trackIndices.size
 
-    /** 专辑封面 Uri（无封面时 Coil 加载失败，由 UI 显示占位图） */
+    /** 是否为用户自建的自定义专辑 */
+    val isCustom: Boolean get() = customId >= 0L
+
+    /** 专辑封面 Uri（自定义封面优先；无封面时 Coil 加载失败，由 UI 显示占位图） */
     val albumArtUri: Uri
-        get() = Uri.parse("content://media/external/audio/albumart/$albumId")
+        get() = customCoverUri
+            ?: Uri.parse("content://media/external/audio/albumart/$albumId")
 }
 
 /**
