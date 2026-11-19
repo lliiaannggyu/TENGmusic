@@ -54,7 +54,7 @@ import com.tengwear.tengmusic.Album
 import com.tengwear.tengmusic.PlayerViewModel
 import kotlinx.coroutines.launch
 
-private val DETAIL_ACCENT = Color(0xFF34C7F4)
+private fun DETAIL_ACCENT(): Color = Color(com.tengwear.tengmusic.AppTheme.accent.value)
 
 /**
  * 专辑详情覆盖层（v1.47 动画版）：
@@ -186,22 +186,13 @@ fun AlbumDetailOverlay(
                     maxLines = 1,
                 )
             }
-            item {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(vertical = 6.dp),
-                ) {
-                    CompactButton(onClick = { closeAnimated() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回专辑流")
-                    }
-                    Button(
-                        onClick = { vm.playAlbum(liveAlbum) },
-                        modifier = Modifier.size(44.dp),
+            if (liveAlbum.isCustom) {
+                item {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(vertical = 6.dp),
                     ) {
-                        Icon(Icons.Filled.PlayArrow, contentDescription = "播放全部")
-                    }
-                    if (liveAlbum.isCustom) {
                         CompactButton(onClick = { onEditCustom(liveAlbum) }) {
                             Icon(Icons.Filled.Edit, contentDescription = "编辑自定义专辑")
                         }
@@ -228,7 +219,7 @@ fun AlbumDetailOverlay(
                     Icon(
                         Icons.Filled.MusicNote,
                         contentDescription = null,
-                        tint = if (isCurrent) DETAIL_ACCENT else Color.Gray,
+                        tint = if (isCurrent) DETAIL_ACCENT() else Color.Gray,
                         modifier = Modifier.size(16.dp),
                     )
                     Spacer(Modifier.size(6.dp))
@@ -237,7 +228,7 @@ fun AlbumDetailOverlay(
                             t?.title ?: "未知曲目",
                             fontSize = 12.sp,
                             maxLines = 1,
-                            color = if (isCurrent) DETAIL_ACCENT else Color.White,
+                            color = if (isCurrent) DETAIL_ACCENT() else Color.White,
                         )
                         Text(
                             formatTrackMs(t?.duration ?: 0L),

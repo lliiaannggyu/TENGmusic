@@ -2,13 +2,13 @@ package com.tengwear.tengmusic.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
@@ -27,7 +27,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
@@ -64,6 +63,7 @@ fun WearMusicApp(vm: PlayerViewModel) {
                 var openAlbum by remember { mutableStateOf<Album?>(null) }
                 var showStats by remember { mutableStateOf(false) }
                 var showCustomAlbumMgr by remember { mutableStateOf(false) }
+                var showThemeManager by remember { mutableStateOf(false) }
                 // 自定义专辑封面选择：待换封面的专辑 id（null = 本次文件管理器是封面工具用的）
                 var pickCoverAlbumId by remember { mutableStateOf<Long?>(null) }
                 var showFilePicker by remember { mutableStateOf(false) }
@@ -109,7 +109,8 @@ fun WearMusicApp(vm: PlayerViewModel) {
                 }
 
                 // 返回键：从最上层逐层退出
-                BackHandler(enabled = showFilePicker) { showFilePicker = false }
+                BackHandler(enabled = showThemeManager) { showThemeManager = false }
+                BackHandler(enabled = !showThemeManager && showFilePicker) { showFilePicker = false }
                 BackHandler(enabled = !showFilePicker && pickCoverAlbumId != null) {
                     pickCoverAlbumId = null; showCustomAlbumMgr = false
                 }
@@ -145,7 +146,6 @@ fun WearMusicApp(vm: PlayerViewModel) {
                     state = pager,
                     modifier = Modifier.fillMaxSize()
                 ) { page ->
-                    val pullDensity = LocalDensity.current
                     when (page) {
                         0 -> Box(
                             modifier = Modifier
@@ -156,20 +156,13 @@ fun WearMusicApp(vm: PlayerViewModel) {
                                         Modifier.blur((10.dp * playerBlur.floatValue))
                                     } else Modifier
                                 )
-                                // 下滑打开「搜索与统计」页（上滑返回）
-                                .pointerInput(Unit) {
-                                    var acc = 0f
-                                    val th = with(pullDensity) { 70.dp.toPx() }
-                                    detectVerticalDragGestures(
-                                        onDragStart = { acc = 0f },
-                                        onDragEnd = { if (acc >= th) showStats = true },
-                                    ) { _, dragAmount -> acc += dragAmount }
-                                },
                         ) {
                             WearPlayerScreen(
                                 vm = vm,
                                 onOpenTrackList = { showTrackList = true },
                                 onOpenAlbumFlow = { showAlbumFlow = true },
+                                // 下滑打开「搜索与统计」页（手势统一在播放页内部识别，避免嵌套冲突）
+                                onOpenStats = { showStats = true },
                                 active = currentPage == 0 && !showAlbumFlow && openAlbum == null && !showStats,
                             )
                         }
@@ -189,7 +182,8 @@ fun WearMusicApp(vm: PlayerViewModel) {
                             onOpenLanTransfer = { showLanTransfer = true },
                             onOpenListenTogether = { showListenTogether = true },
                             onOpenCustomAlbums = { showCustomAlbumMgr = true },
-                            active = currentPage == 3 && !showAlbumFlow && !showCoverTool && !showCustomAlbumMgr,
+                            onOpenThemeManager = { showThemeManager = true },
+                            active = currentPage == 3 && !showAlbumFlow && !showCoverTool && !showCustomAlbumMgr && !showThemeManager,
                         )
                     }
                 }
@@ -211,7 +205,9 @@ fun WearMusicApp(vm: PlayerViewModel) {
                 AnimatedVisibility(
                     visible = showStats,
                     enter = slideInVertically(initialOffsetY = { -it }),
-                    exit = slideOutVertically(targetOffsetY = { it / 2 }),
+                    // 原路返回：从顶部滑入，退出就往顶部滑出（整页上移回去），
+                    // 而不是往下沉半截再突然消失。
+                    exit = slideOutVertically(targetOffsetY = { -it }),
                 ) {
                     SearchStatsScreen(
                         vm = vm,
@@ -223,8 +219,9 @@ fun WearMusicApp(vm: PlayerViewModel) {
                 // ===== 专辑流（按专辑浏览）=====
                 AnimatedVisibility(
                     visible = showAlbumFlow,
+                    // 用回原本的从下滑入打开动画；黑屏根因已在 Cover.kt 修复（封面首帧即绘制）
                     enter = slideInVertically(initialOffsetY = { it }),
-                    exit = slideOutVertically(targetOffsetY = { it }),
+                    exit = ExitTransition.None,
                 ) {
                     Box(modifier = Modifier.fillMaxSize()) {
                         AlbumCoverFlow(
@@ -273,6 +270,21 @@ fun WearMusicApp(vm: PlayerViewModel) {
                                 showFilePicker = true
                             },
                             active = showCustomAlbumMgr && !showFilePicker,
+                        )
+                    }
+                }
+
+                // ===== 主题工坊：自定义播放器UI/歌词主题 =====
+                AnimatedVisibility(
+                    visible = showThemeManager,
+                    enter = slideInVertically(initialOffsetY = { it }),
+                    exit = slideOutVertically(targetOffsetY = { it }),
+                ) {
+                    Box(Modifier.fillMaxSize().background(Color(0xFF06070A))) {
+                        ThemeManagerScreen(
+                            vm = vm,
+                            onClose = { showThemeManager = false },
+                            active = showThemeManager,
                         )
                     }
                 }

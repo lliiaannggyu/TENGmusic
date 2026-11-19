@@ -25,8 +25,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
@@ -35,7 +35,6 @@ import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 import androidx.wear.compose.material3.Card
 import androidx.wear.compose.material3.CardDefaults
 import androidx.wear.compose.material3.Icon
-import androidx.wear.compose.material3.ListHeader
 import androidx.wear.compose.material3.Text
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -48,105 +47,140 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 
+/** 强调色：跟随全局主题色；带透明版本用于选中态底色 */
+private fun themeAccent(): Color = Color(com.tengwear.tengmusic.AppTheme.accent.value)
+private fun themeAccentDim(): Color = com.tengwear.tengmusic.AppTheme.withAlpha(com.tengwear.tengmusic.AppTheme.accent.value, 0x22)
+
+
+/** 图片扩展名集合（封面工具用） */
+val IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png", "webp", "gif", "bmp")
+/** 主题文件扩展名（主题工坊用） */
+val THEME_EXTENSIONS = setOf("json")
+
 /**
- * 内置文件管理器（图片多选）：直接在 App 自己的文件目录里浏览图片，
- * **不调用任何系统文件夹选择器、不申请任何存储权限**。
+ * 内置文件管理器（通用多选）：从内部存储根目录自由浏览任意目录、勾选指定类型文件。
  *
- * 图片来源 = App 专属目录下的 covers 文件夹：
- *   context.getExternalFilesDir("covers")
- *   即 /.../Android/data/<包名>/files/covers
- * 用户用电脑 ADB 或手表文件传输把封面图放进去即可，App 用 java.io.File 直接列目录，
- * 支持进入子文件夹、返回上级、多选图片。
+ * 关键修复：不再锁死上次的目录（那会把人困在空文件夹里）。每次进入都从内部存储
+ * 根目录 [root] 出发；返回上级用 parentFile 判断，永远可用，一路可退回根目录。
+ * 零权限、不调系统选择器，用 java.io.File 直接列目录。
  *
- * 选中图片以 [File] 形式回传，调用方（封面工具）直接读字节，无需内容提供器 / 权限。
- *
- * @param onResult 用户点「完成」后回传被选中的图片 File 列表（已去重）
- * @param onClose  关闭文件管理器（取消选择）
+ * @param allowedExtensions 允许勾选/显示的文件扩展名（小写，不含点）；空集合表示显示全部文件
+ * @param startDir          可选起始目录；仅当它位于内部存储根之内才生效，否则忽略（防止被困在私有空目录）
+ * @param title             根目录栏显示名
+ * @param onResult          点「完成」后回传选中的文件列表
+ * @param onClose           关闭（取消）
  */
 @Composable
 fun FilePickerScreen(
     onResult: (List<File>) -> Unit,
     onClose: () -> Unit,
+    allowedExtensions: Set<String> = IMAGE_EXTENSIONS,
+    startDir: File? = null,
+    title: String = "文件管理器",
 ) {
-    val context = LocalContext.current
-    // 内置根目录：App 专属 covers 文件夹（零权限、可直接读）
-    val root = remember { getCoversDir(context) }
-    // 当前所在文件夹（默认根）
-    var currentFolder by remember { mutableStateOf<File?>(null) }
-    // 父目录栈（支持「返回上级」）
-    val folderStack = remember { mutableStateListOf<File>() }
-    // 已勾选的图片
+    // 自由浏览的根：内部存储根目录。传入的 startDir 若在根之内则用它，否则忽略。
+    val root = remember {
+        val r = android.os.Environment.getExternalStorageDirectory()
+        val s = startDir
+        if (s != null && s.isDirectory &&
+            (s.absolutePath == r.absolutePath || s.absolutePath.startsWith(r.absolutePath + File.separator))
+        ) s else r
+    }
+    // 每次进入都从根目录开始，绝不恢复上次目录（那正是「固定文件夹」的元凶）。
+    var currentFolder by remember { mutableStateOf<File>(root) }
     val selected = remember { mutableStateListOf<File>() }
-    // 刷新计数：递增可强制重新扫描目录（放入新图后点刷新）
     var reloadKey by remember { mutableStateOf(0) }
 
-    // 进入即定位到根目录；v1.47：若上次浏览过其它目录，则恢复到上次的位置
-    LaunchedEffect(Unit) {
-        val last = com.tengwear.tengmusic.getPickerLastDir(context)
-        val lastDir = last.takeIf { it.isNotEmpty() }?.let { File(it) }
-        currentFolder = if (lastDir != null && lastDir.exists() && lastDir.isDirectory) lastDir else root
-    }
-
-    // 当前文件夹下的内容（子文件夹 + 图片文件），IO 线程读取
     var children by remember { mutableStateOf<List<File>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     LaunchedEffect(currentFolder, reloadKey) {
-        val f = currentFolder ?: return@LaunchedEffect
+        val f = currentFolder
         loading = true
         children = withContext(Dispatchers.IO) {
             f.listFiles()?.toList()?.filter { it.exists() } ?: emptyList()
         }
         loading = false
-        // 记住本次浏览的目录，下次打开直接回到这里
-        com.tengwear.tengmusic.setPickerLastDir(context, f.absolutePath)
     }
 
-    fun openFolder(folder: File) {
-        currentFolder?.let { folderStack.add(it) }
-        currentFolder = folder
+    // 能否返回上级：只要还没到根，且父目录仍在内部存储根之内，就允许返回。
+    fun canGoUp(): Boolean {
+        val p = currentFolder.parentFile ?: return false
+        if (currentFolder.absolutePath == root.absolutePath) return false
+        return p.absolutePath == root.absolutePath ||
+            p.absolutePath.startsWith(root.absolutePath + File.separator)
     }
-
     fun goUp() {
-        if (folderStack.isNotEmpty()) {
-            currentFolder = folderStack.removeAt(folderStack.lastIndex)
+        val p = currentFolder.parentFile ?: return
+        if (p.absolutePath == root.absolutePath ||
+            p.absolutePath.startsWith(root.absolutePath + File.separator)
+        ) {
+            currentFolder = p
         }
+    }
+    fun openFolder(folder: File) {
+        if (folder.isDirectory) currentFolder = folder
+    }
+    fun matches(f: File): Boolean {
+        if (!f.isFile) return false
+        if (allowedExtensions.isEmpty()) return true
+        val ext = f.name.substringAfterLast('.', "").lowercase()
+        return ext in allowedExtensions
+    }
+
+    val currentPath = currentFolder.absolutePath
+    val displayName = if (currentFolder.absolutePath == root.absolutePath) {
+        "内部存储"
+    } else {
+        currentFolder.name ?: currentPath
     }
 
     Box(Modifier.fillMaxSize().background(Color(0xFF06070A))) {
         Column(Modifier.fillMaxSize()) {
-            // 顶部栏：关闭（×）/ 当前目录名 / 完成（N）
+            // 顶部栏：关闭 / [返回上级] / 当前目录名 / 完成(N)
             Row(
-                Modifier.fillMaxWidth().padding(10.dp),
+                Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Icon(
-                    imageVector = Icons.Filled.Close,
-                    contentDescription = "关闭",
-                    tint = Color.White,
-                    modifier = Modifier.size(18.dp).clip(RoundedCornerShape(percent = 50))
-                        .clickable(onClick = onClose),
-                )
-                val folder = currentFolder
-                val label = if (folder == null) "文件管理器" else relativePath(root, folder)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = "关闭",
+                        tint = Color.White,
+                        modifier = Modifier.size(16.dp).clip(RoundedCornerShape(percent = 50))
+                            .clickable(onClick = onClose),
+                    )
+                    if (canGoUp()) {
+                        Spacer(Modifier.width(8.dp))
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "返回上级",
+                            tint = themeAccent(),
+                            modifier = Modifier.size(16.dp).clip(RoundedCornerShape(percent = 50))
+                                .clickable(onClick = { goUp() }),
+                        )
+                    }
+                }
                 Text(
-                    text = label,
-                    fontSize = 12.sp,
+                    text = displayName,
+                    fontSize = 11.sp,
                     color = Color.White,
                     textAlign = TextAlign.Center,
-                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
                 )
                 Text(
                     text = "完成(${selected.size})",
-                    fontSize = 11.sp,
-                    color = if (selected.isNotEmpty()) Color(0xFF98EAF9) else Color.Gray,
+                    fontSize = 10.sp,
+                    color = if (selected.isNotEmpty()) themeAccent() else Color.Gray,
                     modifier = Modifier
                         .clip(RoundedCornerShape(percent = 50))
-                        .background(if (selected.isNotEmpty()) Color(0x2298EAF9) else Color(0x33FFFFFF))
+                        .background(if (selected.isNotEmpty()) themeAccentDim() else Color(0x33FFFFFF))
                         .clickable(enabled = selected.isNotEmpty()) {
                             if (selected.isNotEmpty()) onResult(selected.toList())
                         }
-                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
                 )
             }
 
@@ -156,50 +190,28 @@ fun FilePickerScreen(
                 modifier = Modifier.fillMaxSize(),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                val folder = currentFolder
-                if (folder == null) {
-                    item {
-                        Text("正在打开…", fontSize = 10.sp, color = Color.Gray)
-                    }
-                } else {
-                    // 返回上级目录（仅在已进入子目录时显示）
-                    if (folderStack.isNotEmpty()) {
-                        item {
-                            Card(
-                                onClick = { goUp() },
-                                modifier = Modifier.fillMaxWidth(0.92f),
-                                shape = RoundedCornerShape(percent = 50),
-                                colors = CardDefaults.cardColors(
-                                    containerColor = Color(0xF20B0B0E),
-                                    contentColor = Color.White,
-                                ),
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.fillMaxWidth().padding(10.dp),
-                                ) {
-                                    Icon(
-                                        Icons.AutoMirrored.Filled.ArrowBack,
-                                        contentDescription = null,
-                                        tint = Color.Gray,
-                                        modifier = Modifier.size(18.dp),
-                                    )
-                                    Spacer(Modifier.width(10.dp))
-                                    Text("返回上级目录", fontSize = 11.sp)
-                                }
-                            }
-                        }
-                    }
+                // 当前完整路径（一眼看清在哪）
+                item {
+                    Text(
+                        currentPath,
+                        fontSize = 8.sp,
+                        color = Color(0x88FFFFFF),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth(0.94f).padding(horizontal = 6.dp),
+                    )
+                }
 
-                    // 刷新：重新扫描当前目录（把刚放入的图片显出来）
+                // 返回上级（列表中也放一个，明显且好点）
+                if (canGoUp()) {
                     item {
                         Card(
-                            onClick = { reloadKey++ },
+                            onClick = { goUp() },
                             modifier = Modifier.fillMaxWidth(0.92f),
                             shape = RoundedCornerShape(percent = 50),
                             colors = CardDefaults.cardColors(
-                                containerColor = Color(0xF20B0B0E),
-                                contentColor = Color.White,
+                                containerColor = Color(0xF20B0B0E), contentColor = Color.White,
                             ),
                         ) {
                             Row(
@@ -207,128 +219,139 @@ fun FilePickerScreen(
                                 modifier = Modifier.fillMaxWidth().padding(10.dp),
                             ) {
                                 Icon(
-                                    Icons.Filled.Refresh,
+                                    Icons.AutoMirrored.Filled.ArrowBack,
                                     contentDescription = null,
-                                    tint = Color(0xFF98EAF9),
+                                    tint = themeAccent(),
                                     modifier = Modifier.size(18.dp),
                                 )
                                 Spacer(Modifier.width(10.dp))
-                                Text("刷新目录", fontSize = 11.sp)
+                                Text("返回上级目录", fontSize = 11.sp)
                             }
                         }
                     }
+                }
 
-                    // 根目录下的引导提示：告诉用户把图放到哪个文件夹
-                    if (folder == root) {
-                        item {
-                            Text(
-                                "把封面图放进本 App 的 covers 文件夹后点「刷新目录」\n" +
-                                    "(可用电脑 ADB 传输：${root.absolutePath})",
-                                fontSize = 8.sp,
-                                color = Color.Gray,
-                                textAlign = TextAlign.Center,
-                                modifier = Modifier.fillMaxWidth().padding(12.dp),
-                            )
-                        }
-                    }
-
-                    val folders = children.filter { it.isDirectory }
-                        .sortedBy { it.name?.lowercase() ?: "" }
-                    val images = children.filter { isImageFile(it) }
-                        .sortedBy { it.name?.lowercase() ?: "" }
-
-                    if (loading) {
-                        item {
-                            Text("正在读取…", fontSize = 10.sp, color = Color.Gray)
-                        }
-                    }
-
-                    // 子文件夹：点按进入
-                    items(folders) { f ->
-                        Card(
-                            onClick = { openFolder(f) },
-                            modifier = Modifier.fillMaxWidth(0.94f),
-                            shape = RoundedCornerShape(percent = 50),
-                            colors = CardDefaults.cardColors(
-                                containerColor = Color(0xF20B0B0E),
-                                contentColor = Color.White,
-                            ),
+                // 刷新
+                item {
+                    Card(
+                        onClick = { reloadKey++ },
+                        modifier = Modifier.fillMaxWidth(0.92f),
+                        shape = RoundedCornerShape(percent = 50),
+                        colors = CardDefaults.cardColors(
+                            containerColor = Color(0xF20B0B0E), contentColor = Color.White,
+                        ),
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth().padding(10.dp),
                         ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
-                            ) {
+                            Icon(
+                                Icons.Filled.Refresh,
+                                contentDescription = null,
+                                tint = themeAccent(),
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Text("刷新目录", fontSize = 11.sp)
+                        }
+                    }
+                }
+
+                val folders = children.filter { it.isDirectory }
+                    .sortedBy { it.name?.lowercase() ?: "" }
+                val files = children.filter { matches(it) }
+                    .sortedBy { it.name?.lowercase() ?: "" }
+
+                if (loading) {
+                    item { Text("正在读取…", fontSize = 10.sp, color = Color.Gray) }
+                }
+
+                // 子文件夹
+                items(folders) { f ->
+                    Card(
+                        onClick = { openFolder(f) },
+                        modifier = Modifier.fillMaxWidth(0.94f),
+                        shape = RoundedCornerShape(percent = 50),
+                        colors = CardDefaults.cardColors(
+                            containerColor = Color(0xF20B0B0E), contentColor = Color.White,
+                        ),
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
+                        ) {
+                            Icon(
+                                Icons.Filled.Folder,
+                                contentDescription = null,
+                                tint = themeAccent(),
+                                modifier = Modifier.size(20.dp),
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(f.name ?: "文件夹", fontSize = 11.sp, maxLines = 1)
+                        }
+                    }
+                }
+
+                if (!loading && files.isEmpty() && folders.isEmpty()) {
+                    item {
+                        Text(
+                            "该文件夹没有可显示的文件或子目录\n可点顶部返回上级换一个目录",
+                            fontSize = 10.sp, color = Color.Gray, textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        )
+                    }
+                }
+
+                // 文件：点按勾选/取消
+                items(files) { file ->
+                    val isSel = selected.contains(file)
+                    val isImage = IMAGE_EXTENSIONS.any { file.name.endsWith(".$it", true) }
+                    Card(
+                        onClick = {
+                            if (isSel) selected.remove(file) else selected.add(file)
+                        },
+                        modifier = Modifier.fillMaxWidth(0.94f),
+                        shape = RoundedCornerShape(percent = 50),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (isSel) themeAccentDim() else Color(0xF20B0B0E),
+                            contentColor = Color.White,
+                        ),
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 5.dp),
+                        ) {
+                            if (isImage) {
+                                AsyncImage(
+                                    model = file,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(30.dp).clip(RoundedCornerShape(4.dp))
+                                        .background(Color(0x22FFFFFF)),
+                                )
+                            } else {
                                 Icon(
                                     Icons.Filled.Folder,
                                     contentDescription = null,
-                                    tint = Color(0xFF98EAF9),
-                                    modifier = Modifier.size(20.dp),
+                                    tint = themeAccent(),
+                                    modifier = Modifier.size(24.dp),
                                 )
-                                Spacer(Modifier.width(8.dp))
-                                Column(Modifier.weight(1f)) {
-                                    Text(f.name ?: "文件夹", fontSize = 11.sp, maxLines = 1)
-                                }
                             }
-                        }
-                    }
-
-                    if (!loading && images.isEmpty() && folders.isEmpty()) {
-                        item {
-                            Text(
-                                "该文件夹没有图片或子文件夹",
-                                fontSize = 10.sp,
-                                color = Color.Gray,
-                                textAlign = TextAlign.Center,
-                                modifier = Modifier.fillMaxWidth().padding(16.dp),
-                            )
-                        }
-                    }
-
-                    // 图片文件：点按勾选/取消（多选）+ 缩略图 + 文件大小
-                    items(images) { img ->
-                        val isSel = selected.contains(img)
-                        Card(
-                            onClick = {
-                                if (isSel) selected.remove(img) else selected.add(img)
-                            },
-                            modifier = Modifier.fillMaxWidth(0.94f),
-                            shape = RoundedCornerShape(percent = 50),
-                            colors = CardDefaults.cardColors(
-                                containerColor = if (isSel) Color(0x2298EAF9) else Color(0xF20B0B0E),
-                                contentColor = Color.White,
-                            ),
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 5.dp),
-                            ) {
-                                AsyncImage(
-                                    model = img,
-                                    contentDescription = null,
-                                    modifier = Modifier
-                                        .size(30.dp)
-                                        .clip(RoundedCornerShape(4.dp))
-                                        .background(Color(0x22FFFFFF)),
+                            Spacer(Modifier.width(8.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(file.name, fontSize = 11.sp, maxLines = 1)
+                                val sizeKb = (file.length() / 1024).toInt()
+                                Text(
+                                    if (sizeKb > 0) "$sizeKb KB" else "",
+                                    fontSize = 8.sp, color = Color.Gray, maxLines = 1,
                                 )
-                                Spacer(Modifier.width(8.dp))
-                                Column(Modifier.weight(1f)) {
-                                    Text(img.name ?: "图片", fontSize = 11.sp, maxLines = 1)
-                                    val sizeKb = (img.length() / 1024).toInt()
-                                    Text(
-                                        if (sizeKb > 0) "$sizeKb KB" else "",
-                                        fontSize = 8.sp,
-                                        color = Color.Gray,
-                                        maxLines = 1,
-                                    )
-                                }
-                                if (isSel) {
-                                    Icon(
-                                        Icons.Filled.Check,
-                                        contentDescription = "已选中",
-                                        tint = Color(0xFF98EAF9),
-                                        modifier = Modifier.size(18.dp),
-                                    )
-                                }
+                            }
+                            if (isSel) {
+                                Icon(
+                                    Icons.Filled.Check,
+                                    contentDescription = "已选中",
+                                    tint = themeAccent(),
+                                    modifier = Modifier.size(18.dp),
+                                )
                             }
                         }
                     }
@@ -336,27 +359,4 @@ fun FilePickerScreen(
             }
         }
     }
-}
-
-/** App 专属 covers 文件夹（零权限、可直接读写） */
-private fun getCoversDir(context: Context): File {
-    val base = context.getExternalFilesDir(null) ?: context.filesDir
-    return File(base, "covers").also { if (!it.exists()) it.mkdirs() }
-}
-
-/** 相对根目录的路径，用于顶部标题：根为 "covers"，子目录为 "covers/xxx" */
-private fun relativePath(root: File, folder: File): String {
-    val rootPath = root.absolutePath.trimEnd('/')
-    val path = folder.absolutePath.trimEnd('/')
-    if (path == rootPath) return "covers"
-    val suffix = path.removePrefix(rootPath).trimStart('/')
-    return if (suffix.isEmpty()) "covers" else "covers/$suffix"
-}
-
-/** 判断一个 File 是否为图片（按扩展名） */
-private fun isImageFile(f: File): Boolean {
-    if (!f.isFile) return false
-    val name = f.name.lowercase()
-    return name.endsWith(".jpg") || name.endsWith(".jpeg") || name.endsWith(".png") ||
-        name.endsWith(".webp") || name.endsWith(".gif") || name.endsWith(".bmp")
 }

@@ -53,6 +53,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 
+/** 强调色：跟随全局主题色；带透明版本用于选中态底色 */
+private fun themeAccent(): Color = Color(com.tengwear.tengmusic.AppTheme.accent.value)
+private fun themeAccentDim(): Color = com.tengwear.tengmusic.AppTheme.withAlpha(com.tengwear.tengmusic.AppTheme.accent.value, 0x22)
+
+
 /** 用户选中的一张待匹配图片（文件名 + 压缩后的 JPEG 字节） */
 private class PickedImage(val name: String, val bytes: ByteArray)
 
@@ -341,11 +346,11 @@ fun CoverToolScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                             Text(
                                 if (hasCover) "替换" else "添加",
                                 fontSize = 9.sp,
-                                color = if (hasCover) Color(0xFF98EAF9) else Color.White,
+                                color = if (hasCover) themeAccent() else Color.White,
                                 textAlign = TextAlign.Center,
                                 modifier = Modifier
                                     .clip(CircleShape)
-                                    .background(if (hasCover) Color(0x2298EAF9) else Color(0x33FFFFFF))
+                                    .background(if (hasCover) themeAccentDim() else Color(0x33FFFFFF))
                                     .padding(horizontal = 7.dp, vertical = 3.dp),
                             )
                         }

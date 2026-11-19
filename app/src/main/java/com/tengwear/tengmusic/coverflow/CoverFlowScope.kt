@@ -9,23 +9,31 @@ import androidx.compose.runtime.Composable
 interface CoverFlowScope {
     /**
      * Add typed items. See [LazyListScope.items]
+     *
+     * [zIndexHint] 返回每项的叠放层级（越居中越大），由下标同步计算，
+     * 避免 item 重建首帧叠放顺序错乱导致的闪卡。
      */
     fun <T> items(
         items: List<T>,
         onSelectHandler: (item: T, index: Int) -> Unit = { _: T, _: Int -> },
         key: ((index: Int) -> Any)? = null,
         contentType: (index: Int) -> Any? = { null },
+        zIndexHint: (index: Int) -> Float = { 0f },
         itemContent: @Composable ((item: T) -> Unit),
     )
 
     /**
      * Add typed items. See [LazyListScope.items]
+     *
+     * [zIndexHint] 返回每项的叠放层级（越居中越大），由下标同步计算，
+     * 避免 item 重建首帧叠放顺序错乱导致的闪卡。
      */
     fun items(
         count: Int,
         onSelectHandler: (index: Int) -> Unit = {},
         key: ((index: Int) -> Any)? = null,
         contentType: (index: Int) -> Any? = { null },
+        zIndexHint: (index: Int) -> Float = { 0f },
         itemContent: @Composable ((index: Int) -> Unit),
     )
 }
@@ -40,6 +48,7 @@ internal class CoverFlowScopeImpl(
         onSelectHandler: (item: T, index: Int) -> Unit,
         key: ((index: Int) -> Any)?,
         contentType: (index: Int) -> Any?,
+        zIndexHint: (index: Int) -> Float,
         itemContent: @Composable (item: T) -> Unit,
     ) = items(
         count = items.size,
@@ -51,6 +60,7 @@ internal class CoverFlowScopeImpl(
         },
         key = key,
         contentType = contentType,
+        zIndexHint = zIndexHint,
     ) {
         itemContent(items[it])
     }
@@ -60,6 +70,7 @@ internal class CoverFlowScopeImpl(
         onSelectHandler: (index: Int) -> Unit,
         key: ((index: Int) -> Any)?,
         contentType: (index: Int) -> Any?,
+        zIndexHint: (index: Int) -> Float,
         itemContent: @Composable (index: Int) -> Unit,
     ) = lazyListScope.items(
         count,
@@ -77,6 +88,7 @@ internal class CoverFlowScopeImpl(
                     onSelectHandler(it)
                 }
             },
+            zIndexHint = zIndexHint(it),
             geometry = geometry,
         ) {
             itemContent(it)

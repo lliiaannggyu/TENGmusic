@@ -125,4 +125,31 @@ class CoverFlowState internal constructor(
     ) {
         flingSnap(scrollDeltaToCenter(index + 1))
     }
+
+    /**
+     * 瞬时定位到指定 content 项（无动画），用于环形列表越界时的无缝跳转：
+     * 把中心从克隆区无感挪到真实区对应位置，避免出现一长段快速滚动。
+     */
+    fun snapInstant(index: Int) {
+        if (geometry == null) return
+        snapJob?.cancel()
+        snapJob = coroutineScope.launch {
+            // 一次到位：先把目标项滚到视口起点，再精确居中，全程一帧完成，没有中间态。
+            // 直接 animateScrollBy(大 delta) 会在滑动中被 fling 抵消而跳不过去。
+            // 边缘闪卡的真正根因是封面异步加载的中间态，已在 UI 层用位图缓存修复。
+            lazyListState.scrollToItem(index + 1)
+            // 用「真实布局信息」计算精确居中的 delta：scrollDeltaToCenter 的公式假设
+            // 每项恰好 coverOffset 宽，与 LazyRow 实际取整后的项宽存在 ±1px 级舍入差，
+            // 回环后这点偏差会触发兜底吸附"拽一下"，表现为顿挫。目标项此刻必然
+            // 在可见区（刚 scrollToItem 到视口起点），直接读它的真实 offset 最准。
+            val layout = lazyListState.layoutInfo
+            val info = layout.visibleItemsInfo.firstOrNull { it.index == index + 1 }
+            val delta = if (info != null) {
+                (info.offset + info.size / 2f) - layout.viewportSize.width / 2f
+            } else {
+                scrollDeltaToCenter(index + 1)
+            }
+            if (delta != 0f) lazyListState.animateScrollBy(delta, tween(durationMillis = 1))
+        }
+    }
 }

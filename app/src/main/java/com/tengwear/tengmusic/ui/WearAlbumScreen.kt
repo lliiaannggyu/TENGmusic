@@ -42,7 +42,7 @@ import coil.compose.AsyncImage
 import com.tengwear.tengmusic.Album
 import com.tengwear.tengmusic.PlayerViewModel
 
-private val ACCENT = Color(0xFF34C7F4)
+private fun ACCENT(): Color = Color(com.tengwear.tengmusic.AppTheme.accent.value)
 
 /**
  * 手表「专辑选曲」页（iPod Classic 风格）：
@@ -196,7 +196,7 @@ private fun AlbumDetailScreen(vm: PlayerViewModel, album: Album, onBack: () -> U
                 Icon(
                     Icons.Filled.MusicNote,
                     contentDescription = null,
-                    tint = if (isCurrent) ACCENT else Color.Gray,
+                    tint = if (isCurrent) ACCENT() else Color.Gray,
                     modifier = Modifier.size(16.dp)
                 )
                 Spacer(Modifier.size(6.dp))
@@ -205,7 +205,7 @@ private fun AlbumDetailScreen(vm: PlayerViewModel, album: Album, onBack: () -> U
                         t?.title ?: "未知曲目",
                         fontSize = 12.sp,
                         maxLines = 1,
-                        color = if (isCurrent) ACCENT else Color.White
+                        color = if (isCurrent) ACCENT() else Color.White
                     )
                     Text(
                         formatMs(t?.duration ?: 0L),

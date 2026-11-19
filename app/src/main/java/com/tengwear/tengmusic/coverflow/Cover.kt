@@ -23,29 +23,39 @@ import kotlin.math.abs
 @Composable
 internal fun Cover(
     geometry: Geometry,
+    /** 叠放层级提示：由 content 下标与当前中心的「同步距离」计算，不依赖异步测量。
+     *  回环平移/大跳转时 item 整组重建，重建首帧 onGloballyPositioned 还没回调，
+     *  若沿用旧的「按 horizontalPosition 算 zIndex」，所有卡片初值都等于「在中心」，
+     *  叠放顺序错乱一帧 —— 这正是「左右卡片一闪一闪」的根因。同步 hint 恒正确。 */
+    zIndexHint: Float = 0f,
     onClickHandler: () -> Unit = {},
     onSelectedHandler: (Boolean) -> Unit,
     content: @Composable () -> Unit,
 ) {
-    var horizontalPosition by remember { mutableStateOf<Float?>(null) }
-    val distanceToCenter = geometry.distanceToCenter(horizontalPosition ?: 0f)
+    // 黑屏根因修复：原实现用 null 表示「还没测到坐标」，并据此跳过整个封面绘制，
+    // 于是打开专辑流的前几帧所有封面都不画 => 整屏黑，卡在打开动画期间；
+    // 等 onGloballyPositioned 回调后才集体亮起 => 就是「加载完才亮」。
+    // 现在给一个合理的初始估算（列表项为 coverOffset 宽、中心在容器中心附近），
+    // 封面从第一帧就绘制，测到真实坐标后再修正变换，期间始终可见。
+    var horizontalPosition by remember {
+        mutableStateOf<Float>(geometry.containerCenterForPosition - geometry.coverOffset / 2f)
+    }
+    val distanceToCenter = geometry.distanceToCenter(horizontalPosition)
 
     // This box is used to space the elements horizontally and to give them the proper z index.
     Box(
         modifier = Modifier
             .width(with(LocalDensity.current) { Dp(geometry.coverOffset / LocalDensity.current.density) })
-            .zIndex(1f - abs(distanceToCenter))
+            .zIndex(zIndexHint)
             .onGloballyPositioned { coordinates ->
                 horizontalPosition = coordinates.positionInParent().x
             },
         contentAlignment = Alignment.Center,
     ) {
-        // this makes sure that the cover only gets painted after we got the proper horizontal position.
-        if (horizontalPosition != null) {
-
-            // we use geometry to check whether an element is selected. That is if it's in the
-            // center.
-            onSelectedHandler(geometry.isSelected(horizontalPosition ?: 0f))
+        // 不再等待坐标：封面首帧即绘制，杜绝打开黑屏。
+        // we use geometry to check whether an element is selected. That is if it's in the
+        // center.
+        onSelectedHandler(geometry.isSelected(horizontalPosition))
 
             // This Box applies the transformation effects: rotation, horizontal shift, and zoom
             Box(
@@ -83,6 +93,5 @@ internal fun Cover(
                     }
                 }
             }
-        }
     }
 }

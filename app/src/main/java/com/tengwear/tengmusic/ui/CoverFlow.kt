@@ -3,7 +3,7 @@ package com.tengwear.tengmusic.ui
 import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
-import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.AnimationState
@@ -64,9 +64,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.Text
-import coil.compose.AsyncImage
+import androidx.compose.foundation.Image
 import com.tengwear.tengmusic.Album
 import com.tengwear.tengmusic.PlayerViewModel
+import com.tengwear.tengmusic.coverflow.CoverCache
 import com.tengwear.tengmusic.coverflow.CoverFlow
 import com.tengwear.tengmusic.coverflow.CoverFlowParams
 import com.tengwear.tengmusic.coverflow.CoverFlowState
@@ -101,8 +102,32 @@ fun AlbumCoverFlow(
     val index by vm.currentIndex.collectAsState()
     val context = LocalContext.current
 
-    // 最靠近屏幕中心的专辑下标（列表首尾各有一个占位 spacer，列表下标 - 1 = 专辑下标）
-    val centeredIndex = remember { mutableStateOf(0) }
+    // ===== 环形专辑流 =====
+    // 在真实专辑前后各拼接若干张克隆，第一张左边能看到最后一张、最后一张右边能看到第一张。
+    // clone 数量随专辑数自适应；只有 1 张专辑时不克隆。
+    val albumCount = albums.size
+    // 真正无缝循环：前后各复制 REP 组（不是 1 组）。
+    // 缓冲越厚，滑动惯性再大也不会撞到物理头尾的 spacer；一旦中心滑进最外侧那组，
+    // 就瞬时平移回中间真实区（内容是同一批专辑、位置完全对齐），用户全程看不到接缝。
+    val rep = 3
+    val clone = if (albumCount > 1) albumCount * rep else albumCount
+    val contentCount = clone + albumCount + clone
+    /** content 下标 → 真实专辑下标（统一取模，负数正确回绕） */
+    fun realOf(contentIdx: Int): Int {
+        if (albumCount <= 0) return 0
+        val r = (contentIdx - clone) % albumCount
+        return if (r < 0) r + albumCount else r
+    }
+    // 供 remember state 的点击回调读取最新值（state 只 remember 一次，闭包不能捕获旧值）
+    val albumsHolder = remember { mutableStateOf(albums) }
+    albumsHolder.value = albums
+    val cloneHolder = remember { mutableIntStateOf(clone) }
+    cloneHolder.value = clone
+    val contentCountHolder = remember { mutableIntStateOf(contentCount) }
+    contentCountHolder.value = contentCount
+
+    // 最靠近屏幕中心的「content 下标」（真实专辑 = realOf(content 下标)）
+    val centeredIndex = remember { mutableStateOf(clone) }
     val vibrator = remember { context.getSystemService(Vibrator::class.java) }
     val buzzMs by vm.flowBuzzMs.collectAsState()
     val buzzStrength by vm.flowBuzzStrength.collectAsState()
@@ -112,17 +137,38 @@ fun AlbumCoverFlow(
     buzzAmpHolder.value = (255 * buzzStrength / 100).coerceIn(1, 255)
     val buzzSuppressUntil = remember { mutableStateOf(0L) }
 
-    // 打开动画进度：0→1 线性；两侧专辑按 |i - startAlbum| 依次展开（从内向外）
-    val openAnim = remember { Animatable(0f) }
-    var startAlbumIdx by remember { mutableIntStateOf(0) }
+    // 只有在「首次打开、动画播放期间」才按距离算渐显；动画结束后恒为 1，
+    // 彻底杜绝「一圈有封面一圈黑白 / 滑动闪卡」——那些都是透明度长期依赖固定
+    // startAlbumIdx 距离、而循环列表 content 下标会不断平移导致的。
+    val animActive = remember { mutableStateOf(true) }
+    // 动画进度用普通 State 承载：每帧写入会触发重组，保证渐显逐帧刷新
+    // （Animatable.value 不是 State，直接读不会触发重组，之前动画"时有时无"就源于此）
+    val animProgress = remember { mutableFloatStateOf(0f) }
+    // 定位/回环跳转期间抑制「兜底归位」，否则会把刚定位好的列表又拽回去
+    val suppressSnapUntil = remember { mutableStateOf(0L) }
+
+    // 首次定位+展开动画只允许执行一次：此前 LaunchedEffect(active, albums.size) 在
+    // 「从专辑详情返回专辑流」时也会重新触发 —— 把用户硬拽回当前播放专辑并重播
+    // 520ms 定位动画，正是「动画乱跳/卡顿」的来源。现在用标记保证一次会话只播一次
+    // （浮层整体关闭时组合销毁、remember 重置，下次打开仍会正常播放）。
+    val didInitialPlacement = remember { mutableStateOf(false) }
+    // 展开动画的距离锚点（v1.47 原版语义）：打开时定位到的 content 下标。
+    // dist 按这个固定锚点算，不跟随滑动 —— 原版「从中间向两边展开」的层次感来源。
+    val startContentIdx = remember { mutableIntStateOf(0) }
+    // 展开动画是否已真正开始：浮层从底部滑入约 300~400ms，此前若直接播展开动画，
+    // 中间两张（错峰最早）的 109ms 弹出窗口会被滑入过程完全盖住 —— 用户看到的就是
+    // 「中间的没动画，远处的有」。现在分两段：滑入期间中心专辑全尺寸可见（跟随页面
+    // 一起滑上来），滑入完成后才开始「中心先收后弹 + 两侧依次炸开」的展开动画。
+    val animStarted = remember { mutableStateOf(false) }
 
     var state: CoverFlowState? = null
     state = rememberCoverFlowState(
         onItemClick = { idx ->
             val s = state
             if (s != null && idx == centeredIndex.value) {
-                // 点「已居中」的专辑 → 打开它的歌曲列表
-                albums.getOrNull(idx)?.let(onOpenAlbum)
+                // 点「已居中」的封面 → 打开它对应的真实专辑
+                val real = realOf(idx)
+                albumsHolder.value.getOrNull(real)?.let(onOpenAlbum)
             } else {
                 s?.scrollToItem(idx)
             }
@@ -135,45 +181,113 @@ fun AlbumCoverFlow(
     val snapTolerancePx = with(density) { 2.dp.toPx() }
 
     LaunchedEffect(state) {
-        val listState = state?.lazyListState ?: return@LaunchedEffect
+        val s = state ?: return@LaunchedEffect
+        val listState = s.lazyListState
         var stillFrames = 0
         while (true) {
-            val newIdx = computeCenteredIndex(listState, albums.size)
-            if (newIdx != centeredIndex.value) {
-                centeredIndex.value = newIdx
+            val total = contentCountHolder.value
+            val cl = cloneHolder.value
+            val ac = albumsHolder.value.size
+            if (total <= 0 || ac <= 0) { delay(60); continue }
+            // computeCenteredIndex 返回 content 下标
+            val newContent = computeCenteredIndex(listState, total)
+            if (newContent != centeredIndex.value) {
+                centeredIndex.value = newContent
                 if (System.currentTimeMillis() >= buzzSuppressUntil.value) {
                     buzz(vibrator, buzzMsHolder.value, buzzAmpHolder.value)
                 }
             }
+            // ===== 真正无缝循环：中心一旦越过「中间真实区」，整表平移整数个周期 =====
+            // 中间真实区 content ∈ [cl, cl+ac)；前后各有 cl 张克隆。
+            // 当中心滑到真实区左侧相邻那一组 ([cl-ac, cl)) → 平移 +ac；
+            // 滑到右侧相邻那一组 ([cl+ac, cl+2ac)) → 平移 -ac。
+            // 平移 ac 张后指向的是「同一张专辑的克隆」，画面完全一样，但列表位置重回中间，
+            // 于是两侧又各有整组克隆缓冲，物理头尾的 spacer 永远碰不到。
+            // 关键：不要求 isScrollInProgress==false —— 滑动中也要回环，否则惯性大时
+            // 会先撞到物理边界再回弹，看起来就是「到头了跳回第一张」。
+            // 回环触发带：允许中心在「真实区 + 两侧各一组克隆」内自由滑动，
+            // 只有当中心滑进更外侧那组（fast approaching 物理头尾）时才瞬时拉回中间。
+            // 带两侧各留 ac 张缓冲，滑动惯性再大也碰不到 spacer，手感顺滑不打断。
+            val loopLow = cl - ac      // 左侧缓冲带下限
+            val loopHigh = cl + 2 * ac // 右侧缓冲带上限
+            if (ac > 1 && System.currentTimeMillis() >= suppressSnapUntil.value &&
+                (newContent < loopLow || newContent >= loopHigh)
+            ) {
+                // 平移整数个周期，把当前专辑锚回中间真实区 [cl, cl+ac)。
+                // 内容 identical（同一张专辑的克隆），画面无跳变。
+                val real = ((newContent - cl) % ac + ac) % ac
+                val jumpTo = cl + real
+                if (jumpTo in 0 until total && jumpTo != newContent) {
+                    suppressSnapUntil.value = System.currentTimeMillis() + 220
+                    buzzSuppressUntil.value = System.currentTimeMillis() + 220
+                    centeredIndex.value = jumpTo
+                    s.snapInstant(jumpTo)
+                    stillFrames = 0
+                    delay(40)
+                    continue
+                }
+            }
             val offPx = centerOffsetPx(listState)
-            if (!listState.isScrollInProgress && abs(offPx) > snapTolerancePx) {
+            if (!listState.isScrollInProgress && abs(offPx) > snapTolerancePx &&
+                System.currentTimeMillis() >= suppressSnapUntil.value
+            ) {
                 stillFrames++
-                if (stillFrames >= 8) {
-                    state?.scrollToItem(centeredIndex.value)
+                // 30ms 轮询 + 3 帧阈值 ≈ 停止后 90ms 内吸附归位；
+                // 此前 60ms×8 帧 ≈ 0.5s 才吸附，表冠翻页后要"卡"半秒才回正。
+                if (stillFrames >= 3) {
+                    s.scrollToItem(centeredIndex.value)
                     stillFrames = 0
                 }
             } else {
                 stillFrames = 0
             }
-            delay(60)
+            delay(30)
         }
     }
 
     // 进入专辑流：先定位到「当前正在播放」的专辑，然后播放从内向外展开动画
     LaunchedEffect(active, albums.size) {
         if (!active || albums.isEmpty()) return@LaunchedEffect
+        // 从专辑详情返回（active 再次变 true）绝不重新定位/重播动画，
+        // 用户停在哪张专辑就留在哪张 —— 否则就是"返回时突然动画乱跳"。
+        if (didInitialPlacement.value) return@LaunchedEffect
+        didInitialPlacement.value = true
         var tries = 0
         while (state?.geometry == null && tries < 100) { delay(16); tries++ }
-        // 当前播放曲目所属专辑的下标（找不到 → 0）
-        val cur = if (index in 0..tracks.lastIndex) {
+        // 当前播放曲目所属专辑的真实下标（找不到 → 0）
+        val curReal = if (index in 0..tracks.lastIndex) {
             albums.indexOfFirst { index in it.trackIndices }.coerceAtLeast(0)
         } else 0
-        startAlbumIdx = cur
-        buzzSuppressUntil.value = System.currentTimeMillis() + 700
-        state?.scrollToItem(cur)
-        // 从内向外依次展开两边的专辑：动画值 = 已展开的「圈数」
-        openAnim.snapTo(0f)
-        openAnim.animateTo(1f, tween(durationMillis = 600, easing = LinearEasing))
+        // 真实下标 → content 下标（落在中间的真实区，前后都有克隆环绕）
+        val curContent = cloneHolder.value + curReal
+        centeredIndex.value = curContent
+        startContentIdx.value = curContent
+        buzzSuppressUntil.value = System.currentTimeMillis() + 900
+        suppressSnapUntil.value = System.currentTimeMillis() + 900
+        // 瞬时定位到当前专辑：绝不用动画滚动（否则打开瞬间会看到一串封面飞过＝像加载）
+        state?.snapInstant(curContent)
+        // 两段式展开动画：
+        // 阶段0（0~360ms）：浮层 slideInVertically 滑入中，中心专辑全尺寸直接可见，
+        //   两侧隐藏 —— 中心不再被滑入动画抢戏；
+        // 阶段1（360~960ms）：中心「先收缩到 0.45 再弹出」，两侧按距离依次炸开
+        //   （v1.47 原版公式系数 5.5）。动画结束后 alpha/scale 锁死，杜绝闪卡。
+        animActive.value = true
+        animStarted.value = false
+        animProgress.value = 0f
+        delay(360)
+        animStarted.value = true
+        // 用 animate 逐帧写入普通 State（每帧触发重组，渐显才连续不卡）
+        animate(0f, 1f, animationSpec = tween(durationMillis = 600, easing = LinearEasing)) { value, _ ->
+            animProgress.value = value
+        }
+        animProgress.value = 1f
+        animActive.value = false
+    }
+
+    // 进入专辑流即后台预解码全部封面进 LruCache：
+    // 之后克隆区/回环/快速滑动渲染的永远都是同一张内存位图，无任何异步加载中间态。
+    LaunchedEffect(albums) {
+        if (albums.isNotEmpty()) CoverCache.preloadAll(context, albums)
     }
 
     Box(
@@ -260,28 +374,53 @@ fun AlbumCoverFlow(
                     mirror = true,
                 ),
             ) {
-                items(albums.size) { i ->
-                    // 从内向外展开：距起始专辑 dist 圈的专辑，在 openAnim 推进到 dist 时开始浮现
-                    val dist = abs(i - startAlbumIdx).toFloat()
-                    val appear = ((openAnim.value * 5.5f - dist).coerceIn(0f, 1f))
+                items(
+                    contentCount,
+                    key = { it },
+                    // 叠放层级用「content 下标与中心的同步距离」计算：不依赖异步测量，
+                    // 回环平移整组重建的首帧叠放顺序也正确 —— 根治左右卡片闪一下。
+                    zIndexHint = { c ->
+                        1f - (abs(c - centeredIndex.value).toFloat().coerceAtMost(10f)) * 0.01f
+                    },
+                ) { c ->
+                    val real = realOf(c)
+                    // 两段式展开渲染：
+                    //  - 中心（正在播放的专辑）不做任何动画：从第一帧起全尺寸直接可见，
+                    //    跟随浮层正常滑出（用户要求：中心卡片不要收缩弹出）；
+                    //  - 两侧卡片按 v1.47 原版公式 (进度*5.5 - 距固定锚点距离) 依次炸开；
+                    //  - 动画结束 alpha/scale 恒 1，滑动/回环不再有透明度变化（防闪黑白）。
+                    val isCenter = c == startContentIdx.value
+                    val appear = when {
+                        !animActive.value -> 1f
+                        isCenter -> 1f
+                        !animStarted.value -> 0f
+                        else -> {
+                            val dist = abs(c - startContentIdx.value).toFloat()
+                            (animProgress.value * 5.5f - dist).coerceIn(0f, 1f)
+                        }
+                    }
+                    val sc = when {
+                        !animActive.value -> 1f
+                        isCenter -> 1f
+                        else -> 0.45f + 0.55f * appear
+                    }
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
                             .graphicsLayer {
                                 alpha = appear
-                                val sc = 0.45f + 0.55f * appear
                                 scaleX = sc
                                 scaleY = sc
                             }
                     ) {
-                        AlbumArtContent(album = albums[i])
+                        albums.getOrNull(real)?.let { AlbumArtContent(album = it) }
                     }
                 }
             }
         }
 
-        // 底部居中：当前专辑名 / 歌手 / 曲目数
-        val currentAlbum = albums.getOrNull(centeredIndex.value)
+        // 底部居中：当前专辑名 / 歌手 / 曲目数（content 下标 → 真实专辑）
+        val currentAlbum = albums.getOrNull(realOf(centeredIndex.value))
         val nameShadow = Shadow(color = Color.Black, offset = Offset(0f, 2f), blurRadius = 4f)
         val isNowPlaying = currentAlbum != null && index in 0..tracks.lastIndex &&
             index in currentAlbum.trackIndices
@@ -376,6 +515,21 @@ private fun centerOffsetPx(listState: LazyListState): Float {
 /** 专辑封面内容：铺满方形封面 + 轻微边框（无封面显示音符占位） */
 @Composable
 private fun AlbumArtContent(album: Album) {
+    val context = LocalContext.current
+    // 根治「循环一圈黑白 / 边缘闪卡」：不再用 AsyncImage 异步加载（复用/回环换 model
+    // 的首帧必闪占位），改为直接画缓存中的位图 —— 同步、同帧、克隆共享同一张位图。
+    var bmp by remember(album.albumId, album.customCoverUri) {
+        mutableStateOf(CoverCache.get(album))
+    }
+    LaunchedEffect(album.albumId, album.customCoverUri) {
+        if (bmp == null) {
+            CoverCache.decode(context, album)?.let {
+                CoverCache.put(album, it)
+                bmp = it
+            }
+        }
+    }
+    val bitmap = bmp
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -390,12 +544,14 @@ private fun AlbumArtContent(album: Album) {
                 .size(48.dp)
                 .align(Alignment.Center),
         )
-        AsyncImage(
-            model = album.albumArtUri,
-            contentDescription = album.name,
-            modifier = Modifier.fillMaxSize(),
-            contentScale = ContentScale.Crop,
-        )
+        if (bitmap != null) {
+            Image(
+                bitmap = bitmap,
+                contentDescription = album.name,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
+            )
+        }
     }
 }
 

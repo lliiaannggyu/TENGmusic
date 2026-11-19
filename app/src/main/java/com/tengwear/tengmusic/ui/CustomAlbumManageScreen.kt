@@ -51,7 +51,8 @@ import coil.compose.AsyncImage
 import com.tengwear.tengmusic.CustomAlbum
 import com.tengwear.tengmusic.PlayerViewModel
 
-private val MG_ACCENT = Color(0xFF34C7F4)
+/** 强调色：跟随全局主题色（专辑主色/自定义色/皮肤色），不再写死蓝色 */
+private fun MG_ACCENT(): Color = Color(com.tengwear.tengmusic.AppTheme.accent.value)
 
 /**
  * 自定义专辑管理页（v1.47）：
@@ -89,7 +90,7 @@ fun CustomAlbumManageScreen(
         if (editing == null) {
             // ================= 专辑列表 =================
             item {
-                Text("自定义专辑", fontSize = 14.sp, color = MG_ACCENT)
+                Text("自定义专辑", fontSize = 14.sp, color = MG_ACCENT())
                 Text("出现在专辑流中，可增删歌 / 换封面 / 排序", fontSize = 9.sp, color = Color.Gray)
             }
 
@@ -112,7 +113,7 @@ fun CustomAlbumManageScreen(
                             onValueChange = { newName = it },
                             singleLine = true,
                             textStyle = TextStyle(fontSize = 11.sp, color = Color.White),
-                            cursorBrush = SolidColor(MG_ACCENT),
+                            cursorBrush = SolidColor(MG_ACCENT()),
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }
@@ -210,7 +211,7 @@ fun CustomAlbumManageScreen(
         } else {
             // ================= 专辑编辑视图 =================
             item {
-                Text("编辑 · ${editing!!.name}", fontSize = 13.sp, color = MG_ACCENT, maxLines = 1)
+                Text("编辑 · ${editing!!.name}", fontSize = 13.sp, color = MG_ACCENT(), maxLines = 1)
             }
 
             // 封面行：点击打开内置文件管理器选图
@@ -272,13 +273,13 @@ fun CustomAlbumManageScreen(
                         Icon(
                             if (inAlbum) Icons.Filled.Album else Icons.Filled.MusicNote,
                             contentDescription = null,
-                            tint = if (inAlbum) MG_ACCENT else Color.Gray,
+                            tint = if (inAlbum) MG_ACCENT() else Color.Gray,
                             modifier = Modifier.size(13.dp),
                         )
                         Spacer(Modifier.width(6.dp))
                         Text(
                             t.title, fontSize = 11.sp, maxLines = 1,
-                            color = if (inAlbum) MG_ACCENT else Color.White,
+                            color = if (inAlbum) MG_ACCENT() else Color.White,
                         )
                     }
                 }

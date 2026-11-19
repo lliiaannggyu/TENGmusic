@@ -30,7 +30,7 @@ import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.Text
 import com.tengwear.tengmusic.PlayerViewModel
 
-private val ACCENT = Color(0xFF34C7F4)
+private fun ACCENT(): Color = Color(com.tengwear.tengmusic.AppTheme.accent.value)
 
 /** 音乐库（文件管理）：点击即播，收藏曲目带心形标记，支持旋转表冠滚动 */
 @Composable
@@ -87,7 +87,7 @@ fun FileManagerScreen(vm: PlayerViewModel) {
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(percent = 50),
                 colors = if (isCurrent) {
-                    CardDefaults.cardColors(contentColor = ACCENT)
+                    CardDefaults.cardColors(contentColor = ACCENT())
                 } else {
                     CardDefaults.cardColors()
                 }

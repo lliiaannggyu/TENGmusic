@@ -59,10 +59,16 @@ fun LyricsScreen(
     val position by vm.position.collectAsState()
     // 歌词着色：跟随专辑主色或用户自定义色（默认白，专辑无封面时）
     val lyricColor by vm.lyricColor.collectAsState()
+    // 自定义主题：暗色（非当前行）/ 背景弱光色
+    val lyricDim by vm.lyricDimColor.collectAsState()
+    val bgGlow by vm.lyricsBgGlow.collectAsState()
+    val dimColor = lyricDim?.let { Color(it) } ?: Color.Gray
     // 歌词切换动画（设置里可选，带实时预览）
     val anim by vm.lyricTransition.collectAsState()
     // 歌词字号（设置里可调 12sp ~ 22sp）
     val lyricFontSize by vm.lyricFontSize.collectAsState()
+    // v2 声明式歌词皮肤（null = 用默认渲染）
+    val lyricsSkin by vm.lyricsSkin.collectAsState()
     // 初始化即把当前句作为中心项，避免首次进入先停在顶部再「跳」到中间的闪动
     val listState = rememberScalingLazyListState(initialCenterItemIndex = idx.coerceAtLeast(0))
     val focusRequester = rememberRotaryFocusRequester(active)
@@ -88,12 +94,22 @@ fun LyricsScreen(
         prevList = lyrics
     }
 
+    // v2 声明式歌词皮肤：整页交给皮肤引擎渲染
+    if (lyricsSkin != null) {
+        SkinLyricsScreen(vm = vm, skin = lyricsSkin!!, active = active)
+        return
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(
                 Brush.radialGradient(
-                    colors = listOf(Color(0x1F34C7F4), Color(0x00000000))
+                    // 弱光跟随主题；主题可指定 bgGlow，否则用当前主题色
+                    colors = listOf(
+                        (bgGlow?.let { Color(it) } ?: Color(lyricColor)).copy(alpha = 0.12f),
+                        Color(0x00000000),
+                    )
                 )
             ),
         contentAlignment = Alignment.Center
@@ -133,6 +149,7 @@ fun LyricsScreen(
                         anim = anim,
                         lineProgress = if (i == idx) lineProgress else 0f,
                         fontSize = lyricFontSize.sp,
+                        dimColor = dimColor,
                         onClick = { vm.seekToLyric(line.timeMs) },
                     )
                 }

@@ -49,7 +49,7 @@ import com.tengwear.tengmusic.lan.LanEvent
 import com.tengwear.tengmusic.lan.LanManager
 import com.tengwear.tengmusic.lan.LanProtocol
 
-private val LAN_ACCENT = Color(0xFF34C7F4)
+private fun LAN_ACCENT(): Color = Color(com.tengwear.tengmusic.AppTheme.accent.value)
 private val LAN_BG = Color(0xF20B0B0E)
 private val LAN_CARD_SELECTED = Color(0x332ECCFF)
 
@@ -136,11 +136,11 @@ fun LanTransferScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                             colors = CardDefaults.cardColors(
                                 containerColor = LAN_CARD_SELECTED,
                                 contentColor = Color.White,
-                                titleColor = LAN_ACCENT,
+                                titleColor = LAN_ACCENT(),
                                 subtitleColor = Color.Gray,
                             ),
                         ) {
-                            WearText("收到传歌请求", fontSize = 11.sp, color = LAN_ACCENT)
+                            WearText("收到传歌请求", fontSize = 11.sp, color = LAN_ACCENT())
                             WearText(
                                 "${offer.peer.name} 想传给你：",
                                 fontSize = 9.sp,
@@ -194,7 +194,7 @@ fun LanTransferScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                         colors = CardDefaults.cardColors(
                             containerColor = if (selected) LAN_CARD_SELECTED else LAN_BG,
                             contentColor = Color.White,
-                            titleColor = if (selected) LAN_ACCENT else Color.White,
+                            titleColor = if (selected) LAN_ACCENT() else Color.White,
                             subtitleColor = Color.Gray,
                         ),
                     ) {
@@ -229,7 +229,7 @@ fun LanTransferScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                         colors = CardDefaults.cardColors(
                             containerColor = if (selected) LAN_CARD_SELECTED else LAN_BG,
                             contentColor = Color.White,
-                            titleColor = if (selected) LAN_ACCENT else Color.White,
+                            titleColor = if (selected) LAN_ACCENT() else Color.White,
                             subtitleColor = Color.Gray,
                         ),
                     ) {
@@ -294,7 +294,7 @@ fun LanTransferScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
-                            WearText(msg, fontSize = 9.sp, color = LAN_ACCENT, textAlign = TextAlign.Center)
+                            WearText(msg, fontSize = 9.sp, color = LAN_ACCENT(), textAlign = TextAlign.Center)
                             WearText(
                                 "知道了",
                                 fontSize = 9.sp,
@@ -344,13 +344,13 @@ internal fun ScalingLazyListScope.transferList(transfers: List<com.tengwear.teng
                 if (frac != null) {
                     TransferProgressRow(frac, tr.done, tr.total)
                 } else {
-                    WearText("传输中…", fontSize = 9.sp, color = LAN_ACCENT)
+                    WearText("传输中…", fontSize = 9.sp, color = LAN_ACCENT())
                 }
             } else {
                 WearText(
                     (if (tr.ok) "✓ " else "✗ ") + tr.message,
                     fontSize = 9.sp,
-                    color = if (tr.ok) LAN_ACCENT else Color(0xFFFF8A80)
+                    color = if (tr.ok) LAN_ACCENT() else Color(0xFFFF8A80)
                 )
             }
         }
@@ -377,7 +377,7 @@ private fun TransferProgressRow(fraction: Float, done: Long, total: Long) {    C
                     .fillMaxWidth(fraction)
                     .height(4.dp)
                     .clip(CircleShape)
-                    .background(LAN_ACCENT)
+                    .background(LAN_ACCENT())
             )
         }
         WearText(

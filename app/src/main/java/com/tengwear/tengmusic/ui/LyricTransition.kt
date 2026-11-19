@@ -112,9 +112,10 @@ fun LyricLine(
     anim: LyricTransition,
     lineProgress: Float = 1f,
     fontSize: TextUnit = 15.sp,
+    dimColor: Color = Color.Gray,
     onClick: () -> Unit,
 ) {
-    val dimColor = Color.Gray
+    // dimColor 可由歌词主题覆盖，默认灰
     val p = lineProgress.coerceIn(0f, 1f)
     val density = LocalDensity.current
     // 两行小字占位高度：字号 × 2（两行）× 1.3（行高）+ 12dp 上下内边距

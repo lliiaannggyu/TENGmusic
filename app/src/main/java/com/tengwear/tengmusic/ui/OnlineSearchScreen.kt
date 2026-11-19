@@ -47,6 +47,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/** 强调色：跟随全局主题色；带透明版本用于选中态底色 */
+private fun themeAccent(): Color = Color(com.tengwear.tengmusic.AppTheme.accent.value)
+private fun themeAccentDim(): Color = com.tengwear.tengmusic.AppTheme.withAlpha(com.tengwear.tengmusic.AppTheme.accent.value, 0x22)
+
+
 /**
  * 在线搜索页（横向翻页第 3 页：播放器 → 歌词 → 在线搜索 → 设置）。
  *
@@ -102,14 +107,14 @@ fun OnlineSearchScreen(vm: PlayerViewModel, active: Boolean) {
                 Icon(
                     imageVector = Icons.Filled.MusicNote,
                     contentDescription = null,
-                    tint = Color(0xFF98EAF9),
+                    tint = themeAccent(),
                     modifier = Modifier.size(16.dp),
                 )
                 Text("在线搜索", fontSize = 13.sp, color = Color.White)
                 Text(
                     if (showSources) "收起" else "音源",
                     fontSize = 11.sp,
-                    color = if (showSources) Color.Gray else Color(0xFF98EAF9),
+                    color = if (showSources) Color.Gray else themeAccent(),
                     modifier = Modifier
                         .clickable { showSources = !showSources }
                         .padding(horizontal = 6.dp, vertical = 2.dp),
@@ -159,7 +164,7 @@ fun OnlineSearchScreen(vm: PlayerViewModel, active: Boolean) {
                             modifier = Modifier.fillMaxWidth(0.92f),
                             shape = RoundedCornerShape(percent = 50),
                             colors = CardDefaults.cardColors(
-                                containerColor = if (sel) Color(0x2298EAF9) else Color(0xF20B0B0E),
+                                containerColor = if (sel) themeAccentDim() else Color(0xF20B0B0E),
                                 contentColor = Color.White,
                             ),
                         ) {
@@ -226,7 +231,7 @@ fun OnlineSearchScreen(vm: PlayerViewModel, active: Boolean) {
                             Text(
                                 "音源：" + (currentSource?.displayName ?: "未设置"),
                                 fontSize = 9.sp,
-                                color = Color(0xFF98EAF9),
+                                color = themeAccent(),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier
@@ -237,10 +242,10 @@ fun OnlineSearchScreen(vm: PlayerViewModel, active: Boolean) {
                             Text(
                                 "搜索",
                                 fontSize = 11.sp,
-                                color = if (keyword.isNotBlank() && currentSource != null) Color(0xFF98EAF9) else Color.Gray,
+                                color = if (keyword.isNotBlank() && currentSource != null) themeAccent() else Color.Gray,
                                 modifier = Modifier
                                     .background(
-                                        if (keyword.isNotBlank() && currentSource != null) Color(0x2298EAF9) else Color(0x22FFFFFF),
+                                        if (keyword.isNotBlank() && currentSource != null) themeAccentDim() else Color(0x22FFFFFF),
                                         RoundedCornerShape(percent = 50),
                                     )
                                     .clickable(enabled = keyword.isNotBlank() && currentSource != null && !searching) {

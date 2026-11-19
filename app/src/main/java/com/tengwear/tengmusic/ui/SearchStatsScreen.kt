@@ -3,7 +3,7 @@ package com.tengwear.tengmusic.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -40,7 +40,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
-import androidx.wear.compose.material3.Button
 import androidx.wear.compose.material3.ButtonDefaults
 import androidx.wear.compose.material3.CompactButton
 import androidx.wear.compose.material3.Icon
@@ -48,8 +47,6 @@ import androidx.wear.compose.material3.Text
 import com.tengwear.tengmusic.Album
 import com.tengwear.tengmusic.PlayStatsRepository
 import com.tengwear.tengmusic.PlayerViewModel
-
-private val STATS_ACCENT = Color(0xFF34C7F4)
 
 /**
  * 搜索与统计页（v1.47）：从播放页下滑打开（关闭时反向滑回）。
@@ -68,6 +65,9 @@ fun SearchStatsScreen(
     val albums by vm.albums.collectAsState()
     val currentIndex by vm.currentIndex.collectAsState()
     val statsVersion by vm.playStatsVersion.collectAsState()
+    // 主题色：跟随专辑主色/用户自定义色，不再固定蓝色
+    val themeColor by vm.lyricColor.collectAsState()
+    val accent = Color(themeColor)
 
     var query by remember { mutableStateOf("") }
     var tabIndex by remember { mutableIntStateOf(0) } // 0 歌曲 1 专辑 2 歌手
@@ -85,6 +85,7 @@ fun SearchStatsScreen(
     val focusRequester = rememberRotaryFocusRequester(active)
     val density = LocalDensity.current
     var dragUpAcc by remember { mutableFloatStateOf(0f) }
+    var dragRightAcc by remember { mutableFloatStateOf(0f) }
 
     fun fmt(ms: Long): String {
         val totalMin = ms / 60000
@@ -100,14 +101,17 @@ fun SearchStatsScreen(
             .fillMaxSize()
             .background(Color(0xFF06070A))
             .pointerInput(Unit) {
-                // 上滑关闭（与打开手势方向相反，动画原路回去）
-                detectVerticalDragGestures(
-                    onDragStart = { dragUpAcc = 0f },
+                // 上滑 或 右滑 都能关闭（返回键由外层 BackHandler 处理）
+                detectDragGestures(
+                    onDragStart = { dragUpAcc = 0f; dragRightAcc = 0f },
                     onDragEnd = {
                         val threshold = with(density) { 60.dp.toPx() }
-                        if (dragUpAcc <= -threshold) onBack()
+                        if (dragUpAcc <= -threshold || dragRightAcc >= threshold) onBack()
                     },
-                ) { _, dragAmount -> dragUpAcc += dragAmount }
+                ) { _, dragAmount ->
+                    dragUpAcc += dragAmount.y
+                    dragRightAcc += dragAmount.x
+                }
             },
     ) {
         // statsVersion 参与 key：听歌时长更新时榜单实时刷新
@@ -142,7 +146,7 @@ fun SearchStatsScreen(
                 Text(
                     "搜索与统计",
                     fontSize = 14.sp,
-                    color = STATS_ACCENT,
+                    color = accent,
                     modifier = Modifier.padding(bottom = 6.dp),
                 )
             }
@@ -171,7 +175,7 @@ fun SearchStatsScreen(
                             onValueChange = { query = it },
                             singleLine = true,
                             textStyle = TextStyle(fontSize = 11.sp, color = Color.White),
-                            cursorBrush = SolidColor(STATS_ACCENT),
+                            cursorBrush = SolidColor(accent),
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }
@@ -207,12 +211,12 @@ fun SearchStatsScreen(
                     ) {
                         Icon(
                             Icons.Filled.MusicNote, contentDescription = null,
-                            tint = if (isCur) STATS_ACCENT else Color.Gray,
+                            tint = if (isCur) accent else Color.Gray,
                             modifier = Modifier.size(14.dp),
                         )
                         Spacer(Modifier.width(6.dp))
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(t.title, fontSize = 11.sp, maxLines = 1, color = if (isCur) STATS_ACCENT else Color.White)
+                            Text(t.title, fontSize = 11.sp, maxLines = 1, color = if (isCur) accent else Color.White)
                             Text("${t.artist} · ${t.album}", fontSize = 9.sp, color = Color.Gray, maxLines = 1)
                         }
                     }
@@ -231,12 +235,12 @@ fun SearchStatsScreen(
                         .background(Color(0x141B2A35), RoundedCornerShape(12.dp))
                         .padding(10.dp),
                 ) {
-                    Text("累计听歌 $total 小时计时", fontSize = 9.sp, color = Color.Gray)
-                    Text(fmt(total), fontSize = 13.sp, color = STATS_ACCENT)
+                    Text("累计听歌时长", fontSize = 9.sp, color = accent.copy(alpha = 0.7f))
+                    Text(fmt(total), fontSize = 13.sp, color = accent)
                     curTrack?.let {
                         Text(
-                            "当前《${it.title}》听过 $curMs",
-                            fontSize = 9.sp, color = Color.Gray, maxLines = 1,
+                            "当前《${it.title}》已听 ${fmt(curMs)}",
+                            fontSize = 9.sp, color = accent.copy(alpha = 0.7f), maxLines = 1,
                         )
                     }
                 }
@@ -249,7 +253,7 @@ fun SearchStatsScreen(
                         CompactButton(
                             onClick = { tabIndex = i },
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = if (tabIndex == i) STATS_ACCENT else Color(0xFF2A2D36),
+                                containerColor = if (tabIndex == i) accent else Color(0xFF2A2D36),
                                 contentColor = if (tabIndex == i) Color(0xFF06343B) else Color.White,
                             ),
                         ) {
@@ -279,7 +283,7 @@ fun SearchStatsScreen(
                     ) {
                         Text(
                             "${i + 1}", fontSize = 11.sp,
-                            color = if (i == 0) STATS_ACCENT else Color.Gray,
+                            color = if (i == 0) accent else Color.Gray,
                             modifier = Modifier.width(18.dp),
                             textAlign = TextAlign.Center,
                         )
@@ -289,17 +293,6 @@ fun SearchStatsScreen(
                 }
             }
 
-            item {
-                Button(
-                    onClick = onBack,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF2A2D36), contentColor = Color.White,
-                    ),
-                    modifier = Modifier.padding(vertical = 8.dp),
-                ) {
-                    Text("返回播放器（上滑）", fontSize = 11.sp)
-                }
-            }
             item { Spacer(Modifier.height(14.dp)) }
         }
     }

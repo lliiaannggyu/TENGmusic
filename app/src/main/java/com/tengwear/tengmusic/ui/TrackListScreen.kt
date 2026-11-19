@@ -42,7 +42,7 @@ import androidx.wear.compose.material3.Text as WearText
 import com.tengwear.tengmusic.PlayerViewModel
 import com.tengwear.tengmusic.Track
 
-private val LIST_ACCENT = Color(0xFF34C7F4)
+private fun LIST_ACCENT(): Color = Color(com.tengwear.tengmusic.AppTheme.accent.value)
 private val LIST_BG = Color(0xF20B0B0E)
 
 /**
@@ -159,7 +159,7 @@ private fun WearTrackRow(
                 WearText(
                     text = track.title,
                     fontSize = 11.sp,
-                    color = if (isCurrent) LIST_ACCENT else Color.White,
+                    color = if (isCurrent) LIST_ACCENT() else Color.White,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -175,7 +175,7 @@ private fun WearTrackRow(
                 Icon(
                     imageVector = Icons.Filled.PlayArrow,
                     contentDescription = "正在播放",
-                    tint = LIST_ACCENT,
+                    tint = LIST_ACCENT(),
                     modifier = Modifier.size(13.dp)
                 )
             } else if (isFavorite) {

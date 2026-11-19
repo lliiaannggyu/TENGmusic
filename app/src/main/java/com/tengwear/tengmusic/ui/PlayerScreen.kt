@@ -107,7 +107,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
-private val ACCENT = Color(0xFF34C7F4)
+private fun ACCENT(): Color = Color(com.tengwear.tengmusic.AppTheme.accent.value)
 private val CTRL_BG = Color(0xFF2A2A35)
 
 /**
@@ -127,6 +127,7 @@ fun WearPlayerScreen(
     vm: PlayerViewModel,
     onOpenTrackList: () -> Unit,
     onOpenAlbumFlow: () -> Unit = {},
+    onOpenStats: () -> Unit = {},
     active: Boolean = true,
 ) {
     val tracks by vm.tracks.collectAsState()
@@ -144,6 +145,11 @@ fun WearPlayerScreen(
     // 进度条样式：0 = 圆环（默认），1 = 波浪圆环（M3E 官方 CircularWavyProgressIndicator 同款）
     val progressStyle by vm.progressStyle.collectAsState()
     val lyricColor by vm.lyricColor.collectAsState()
+    // 自定义播放器主题：标题/歌手字号、背景色
+    val themeTitleSp by vm.playerTitleSize.collectAsState()
+    val themeArtistSp by vm.playerArtistSize.collectAsState()
+    val themeBg by vm.playerBackground.collectAsState()
+    val playerSkin by vm.playerSkin.collectAsState()
     val current = tracks.getOrNull(index)
     val progress = if (duration > 0) position.toFloat() / duration.toFloat() else 0f
 
@@ -151,6 +157,17 @@ fun WearPlayerScreen(
         targetValue = progress,
         label = "playProgress",
     )
+
+    // ===== 切歌动画 =====
+    // 当前曲目变化时，progress 从 0→1：封面/标题做一次「由下往上滑入 + 淡入 + 轻微放大」。
+    // 用 currentTrackKey 作为 key，切歌/首次进入都会重放；同一首歌内播放进度变化不触发。
+    val currentTrackKey = current?.let { "${it.uri}|${it.title}" } ?: "none"
+    val switchAnim = remember { androidx.compose.animation.core.Animatable(1f) }
+    LaunchedEffect(currentTrackKey) {
+        switchAnim.snapTo(0f)
+        switchAnim.animateTo(1f, tween(durationMillis = 420, easing = LinearEasing))
+    }
+    val switchProgress by switchAnim.asState()
 
     val focusRequester = rememberRotaryFocusRequester(active)
 
@@ -171,7 +188,7 @@ fun WearPlayerScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF06070A))
+            .background(themeBg?.let { Color(it) } ?: Color(0xFF06070A))
             .let { m ->
                 if (active) {
                     m.focusRequester(focusRequester)
@@ -190,18 +207,33 @@ fun WearPlayerScreen(
                     onDragStart = { swipeAcc = 0f },
                     onDragEnd = {
                         val threshold = with(density) { 70.dp.toPx() }
-                        if (swipeAcc <= -threshold && !showVolume) onOpenAlbumFlow()
+                        if (showVolume) return@detectVerticalDragGestures
+                        // 下滑（dragAmount>0）打开统计页；上滑（<0）打开专辑流
+                        when {
+                            swipeAcc >= threshold -> onOpenStats()
+                            swipeAcc <= -threshold -> onOpenAlbumFlow()
+                        }
                     },
                 ) { _, dragAmount -> swipeAcc += dragAmount }
             },
     ) {
         // 1) 背景层：封面铺满 + 模糊 + 渐变暗化
+        // 切歌动画：新封面从轻微放大 + 下移 + 半透明，随 switchProgress 归位，
+        // 让每次切歌有一次柔和的「滑入」过渡（切歌/首次进入才重放）。
         AsyncImage(
             model = current?.albumArtUri,
             contentDescription = null,
             modifier = Modifier
                 .fillMaxSize()
-                .then(blurModifier(blurRadius)),
+                .then(blurModifier(blurRadius))
+                .graphicsLayer {
+                    val p = switchProgress.coerceIn(0f, 1f)
+                    alpha = 0.35f + 0.65f * p
+                    val sc = 1.06f - 0.06f * p
+                    scaleX = sc
+                    scaleY = sc
+                    translationY = (1f - p) * 14f
+                },
             contentScale = ContentScale.Crop,
         )
         Box(
@@ -217,7 +249,15 @@ fun WearPlayerScreen(
                 ),
         )
 
-        // 2) 圆形安全区
+        // 2) 圆形安全区：v2 皮肤引擎 or 默认布局
+        if (playerSkin != null) {
+            SkinPlayerScreen(
+                vm = vm,
+                skin = playerSkin!!,
+                active = active,
+                onOpenVolume = { showVolume = !showVolume },
+            )
+        } else
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
             val w = maxWidth
             val h = maxHeight
@@ -240,8 +280,8 @@ fun WearPlayerScreen(
             // —— 等比尺寸 ——
             val playSize: Dp = (d * 0.25f).coerceIn(52.dp, 76.dp)
             val sideSize: Dp = (playSize * 0.74f)
-            val titleSp = (d.value * 0.034f).coerceIn(12f, 16f).sp
-            val artistSp = (d.value * 0.026f).coerceIn(10f, 13f).sp
+            val titleSp = themeTitleSp.toFloat().sp
+            val artistSp = themeArtistSp.toFloat().sp
             val topPad: Dp = (d * 0.05f).coerceIn(14.dp, 24.dp)
             val smallGap: Dp = (d * 0.02f).coerceIn(4.dp, 10.dp)
 
@@ -249,7 +289,7 @@ fun WearPlayerScreen(
             // 这里按经验比例给上下区域留出水平内边距，让内容不再贴边。
             val topSidePad: Dp = d * 0.12f
             val bottomSidePad: Dp = d * 0.20f
-            // 进度环 / 进度条跟随歌词主题色（而非固定 ACCENT）
+            // 进度环 / 进度条跟随歌词主题色（而非固定蓝色）
             val themeColor = Color(lyricColor)
 
             // 主题（仅保留 M3E 一套 UI，经典主题已移除）
@@ -636,7 +676,7 @@ private fun PlayPauseButton(
     isPlaying: Boolean,
     onToggle: () -> Unit,
     size: Dp = 56.dp,
-    background: Color = ACCENT,
+    background: Color = ACCENT(),
     iconColor: Color = Color.White,
     pill: Boolean = false,
     interactionSource: MutableInteractionSource? = null,

@@ -157,6 +157,7 @@ fun AudioSettingsScreen(
     onOpenLanTransfer: () -> Unit = {},
     onOpenListenTogether: () -> Unit = {},
     onOpenCustomAlbums: () -> Unit = {},
+    onOpenThemeManager: () -> Unit = {},
     active: Boolean = true,
 ) {
     val eqEnabled by vm.eqEnabled.collectAsState()
@@ -921,6 +922,17 @@ fun AudioSettingsScreen(
                     ) {
                         Text("自定义专辑", fontSize = 11.sp)
                         Text("增删歌曲 · 换封面 · 专辑流排序", fontSize = 9.sp)
+                    }
+                }
+                item {
+                    Card(
+                        onClick = onOpenThemeManager,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(percent = 50),
+                        colors = accentCardColors(accent),
+                    ) {
+                        Text("主题工坊", fontSize = 11.sp)
+                        Text("自制播放器UI/歌词主题 · 导入·预览·切换·删除", fontSize = 9.sp)
                     }
                 }
                 item {

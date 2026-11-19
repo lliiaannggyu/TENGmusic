@@ -54,8 +54,8 @@ internal class Geometry(
         )
 
     @Stable
-    private val containerCenter
-        get() = size.width / 2
+    internal val containerCenterForPosition: Float
+        get() = size.width / 2f
 
     @Stable
     private val zoomDelta
@@ -71,7 +71,7 @@ internal class Geometry(
 
     @Stable
     internal val spacerWidth
-        get() = containerCenter - coverOffset / 2
+        get() = containerCenterForPosition.toInt() - coverOffset / 2
 
     @Stable
     internal fun isSelected(horizontalPosition: Float): Boolean {
@@ -80,7 +80,7 @@ internal class Geometry(
 
     @Stable
     internal fun distanceToCenter(horizontalPosition: Float): Float {
-        return horizontalPosition + coverOffset * .5f - containerCenter
+        return horizontalPosition + coverOffset * .5f - containerCenterForPosition
     }
 
     @Stable

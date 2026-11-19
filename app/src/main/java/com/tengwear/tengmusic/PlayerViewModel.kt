@@ -238,6 +238,126 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     )
     val lyricFontSize = _lyricFontSize.asStateFlow()
 
+    // ---------------- 自定义主题（v1.48）----------------
+    /** 播放器标题字号（sp），可被主题覆盖 */
+    private val _playerTitleSize = MutableStateFlow(16)
+    val playerTitleSize = _playerTitleSize.asStateFlow()
+    /** 播放器歌手字号（sp），可被主题覆盖 */
+    private val _playerArtistSize = MutableStateFlow(11)
+    val playerArtistSize = _playerArtistSize.asStateFlow()
+    /** 播放器背景色（可被主题覆盖），null = 用默认黑 */
+    private val _playerBackground = MutableStateFlow<Int?>(null)
+    val playerBackground = _playerBackground.asStateFlow()
+    /** 歌词暗色（非当前行），可被主题覆盖；null = 用默认灰 */
+    private val _lyricDimColor = MutableStateFlow<Int?>(null)
+    val lyricDimColor = _lyricDimColor.asStateFlow()
+    /** 歌词页背景弱光色，可被主题覆盖；null = 用主题 lyricColor */
+    private val _lyricsBgGlow = MutableStateFlow<Int?>(null)
+    val lyricsBgGlow = _lyricsBgGlow.asStateFlow()
+    /** 主题列表版本号：导入/删除主题后自增，驱动管理页刷新 */
+    private val _themeVersion = MutableStateFlow(0)
+    val themeVersion = _themeVersion.asStateFlow()
+    /** v2 声明式播放器皮肤（null = 用默认播放器布局） */
+    private val _playerSkin = MutableStateFlow<PlayerSkin?>(null)
+    val playerSkin = _playerSkin.asStateFlow()
+    /** v2 声明式歌词皮肤（null = 用默认歌词渲染） */
+    private val _lyricsSkin = MutableStateFlow<LyricsSkin?>(null)
+    val lyricsSkin = _lyricsSkin.asStateFlow()
+
+    init {
+        // 恢复上次选中的主题
+        applyTheme(CustomThemeRepository.activeTheme(getApplication(), "player"))
+        applyTheme(CustomThemeRepository.activeTheme(getApplication(), "lyrics"))
+    }
+
+    /** 主题列表发生变更（导入/删除）后调用 */
+    fun notifyThemesChanged() { _themeVersion.value++ }
+
+    /** 应用一个主题：把其中的参数写入对应 flow；null = 恢复默认 */
+    fun applyTheme(theme: ThemeFile?) {
+        when {
+            // ---- v2 声明式皮肤 ----
+            theme?.playerSkin != null -> {
+                val skin = theme.playerSkin
+                _playerSkin.value = skin
+                skin.bg?.let { _playerBackground.value = it }
+                skin.bgBlur.let { setBlurRadius(it) }
+                skin.dim.let { _dimAlpha.value = it.coerceIn(0f, 0.95f) }
+                // 取进度环/播放键的代表色同步主题色
+                skin.widgets.firstOrNull { it.id == "progress" }?.color?.let {
+                    _lyricCustomColor.value = it; setLyricColorMode(1)
+                } ?: skin.widgets.firstOrNull { it.id == "play" }?.bg?.let {
+                    _lyricCustomColor.value = it; setLyricColorMode(1)
+                }
+                CustomThemeRepository.setActiveFileName(getApplication(), "player", theme.fileName)
+            }
+            theme?.lyricsSkin != null -> {
+                val skin = theme.lyricsSkin
+                _lyricsSkin.value = skin
+                skin.active.color?.let { _lyricCustomColor.value = it; setLyricColorMode(1) }
+                skin.active.size.let { setLyricFontSize(it.toFloat()) }
+                skin.bgGlow?.let { _lyricsBgGlow.value = it }
+                CustomThemeRepository.setActiveFileName(getApplication(), "lyrics", theme.fileName)
+            }
+            // ---- v1 精简主题（兼容）----
+            theme?.player != null -> {
+                _playerSkin.value = null
+                val p = theme.player
+                p.accent?.let {
+                    _lyricCustomColor.value = it
+                    setLyricColorMode(1)
+                }
+                p.background?.let { _playerBackground.value = it }
+                p.titleSizeSp?.let { _playerTitleSize.value = it }
+                p.artistSizeSp?.let { _playerArtistSize.value = it }
+                p.ringRadiusFrac?.let { setRingRadiusFrac(it) }
+                p.ringStrokeDp?.let { setRingStroke(it) }
+                p.progressStyle?.let { setProgressStyle(it) }
+                p.blurDp?.let { setBlurRadius(it) }
+                p.dimAlpha?.let { _dimAlpha.value = it.coerceIn(0f, 0.95f) }
+                CustomThemeRepository.setActiveFileName(getApplication(), "player", theme.fileName)
+            }
+            theme?.lyrics != null -> {
+                _lyricsSkin.value = null
+                val l = theme.lyrics
+                l.activeColor?.let {
+                    _lyricCustomColor.value = it
+                    setLyricColorMode(1)
+                }
+                l.dimColor?.let { _lyricDimColor.value = it }
+                l.fontSizeSp?.let { setLyricFontSize(it.toFloat()) }
+                l.bgGlow?.let { _lyricsBgGlow.value = it }
+                l.transitionId?.let { setLyricTransition(com.tengwear.tengmusic.ui.LyricTransition.fromId(it)) }
+                CustomThemeRepository.setActiveFileName(getApplication(), "lyrics", theme.fileName)
+            }
+        }
+    }
+
+    /** 取消当前主题（恢复该类的默认参数） */
+    fun clearTheme(kind: String) {
+        CustomThemeRepository.setActiveFileName(getApplication(), kind, null)
+        if (kind == "player") {
+            _playerSkin.value = null
+            _playerTitleSize.value = 16
+            _playerArtistSize.value = 11
+            _playerBackground.value = null
+            setRingRadiusFrac(0.47f)
+            setRingStroke(5f)
+            setProgressStyle(0)
+            setBlurRadius(16f)
+            _dimAlpha.value = 0.55f
+            setLyricColorMode(0)
+        } else {
+            _lyricsSkin.value = null
+            _lyricDimColor.value = null
+            _lyricsBgGlow.value = null
+            setLyricColorMode(0)
+            setLyricFontSize(15f)
+            setLyricTransition(com.tengwear.tengmusic.ui.LyricTransition.SCALE)
+        }
+        _themeVersion.value++
+    }
+
     // ---------------- 封面工具 ----------------
 
     /** 封面工具最近一次操作结果（写入中 / 成功 / 失败），供界面提示 */
@@ -628,11 +748,17 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 根据当前模式解析最终歌词颜色 */
     private fun recomputeLyricColor() {
-        _lyricColor.value = if (_lyricColorMode.value == 0) {
+        val resolved = if (_lyricColorMode.value == 0) {
             _albumColor.value ?: 0xFFFFFFFF.toInt()
         } else {
             _lyricCustomColor.value
         }
+        _lyricColor.value = resolved
+        // 同步全局强调色；纯白（无专辑色且未自定义）时回退默认青色，避免新增页面变一片白
+        com.tengwear.tengmusic.AppTheme.update(
+            if (resolved == 0xFFFFFFFF.toInt()) com.tengwear.tengmusic.AppTheme.DEFAULT_ACCENT
+            else resolved
+        )
     }
 
     // ---------------- 歌词切换动画 API ----------------
