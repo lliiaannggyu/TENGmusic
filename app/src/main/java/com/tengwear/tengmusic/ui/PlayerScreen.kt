@@ -778,17 +778,22 @@ private fun PrevNextButton(
     }
 }
 
-/** RenderEffect 模糊修饰符（仅 API 31+）。 */
+/** RenderEffect 模糊修饰符（仅 API 31+）。
+ *  低性能设备优化：RenderEffect 对象只创建一次并缓存 —— 此前每次重组都 new 一个
+ *  createBlurEffect，而播放页进度每 200ms 更新、切歌动画每帧、退模糊每 15ms 都在
+ *  触发重组，导致全屏高斯模糊反复重建/重绘，打满 GPU/CPU 抢占音频线程造成声音卡顿。
+ *  半径夹到 18px 上限，进一步压低填充率。 */
 @Composable
 private fun blurModifier(radiusDp: Float): Modifier {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return Modifier
     val density = LocalDensity.current
-    val radiusPx = with(density) { radiusDp.dp.toPx() }
-    return Modifier.graphicsLayer {
-        renderEffect = RenderEffect
+    val radiusPx = with(density) { radiusDp.dp.toPx().coerceAtMost(18.dp.toPx()) }
+    val effect = remember(radiusPx) {
+        RenderEffect
             .createBlurEffect(radiusPx, radiusPx, Shader.TileMode.CLAMP)
             .asComposeRenderEffect()
     }
+    return Modifier.graphicsLayer { renderEffect = effect }
 }
 
 /**

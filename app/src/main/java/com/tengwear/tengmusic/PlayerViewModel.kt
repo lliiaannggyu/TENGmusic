@@ -617,8 +617,10 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 _eqGains.value = gains
                 gains.forEachIndexed { i, g -> AudioEffects.setBandLevel(i, g) }
+                // 低性能优化：开关的生效已由 setEqEnabled() 主动调用 setEnabled 完成；
+                // 此前这里每 200ms 都调一次 setEnabled（Binder 跨进程到 audioflinger），
+                // 在低性能设备上持续抢占 CPU 造成音频欠载/卡顿。仅在频段数变化时初始化即可。
             }
-            AudioEffects.setEnabled(_eqEnabled.value)
         }
     }
 

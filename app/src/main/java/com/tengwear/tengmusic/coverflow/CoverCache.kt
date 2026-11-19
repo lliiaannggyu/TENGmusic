@@ -28,11 +28,12 @@ import kotlinx.coroutines.withContext
  */
 object CoverCache {
 
-    /** 解码目标尺寸（专辑流里封面最大约 200px，320 已超采样，肉眼无损） */
-    private const val TARGET_PX = 320
+    /** 解码目标尺寸：低性能设备优化，专辑流卡片实际显示约 150px，用 128 足够清晰，
+     *  位图内存仅为 320px 的 1/6，一次性预解码几十张也不再撑爆内存/触发 GC 抖动。 */
+    private const val TARGET_PX = 128
 
-    /** 缓存上限 24MB（按位图字节计），足够几十张专辑 */
-    private val lru = object : LruCache<String, ImageBitmap>(24 * 1024 * 1024) {
+    /** 缓存上限 8MB（按位图字节计），128px 位图一张约 64KB，可缓存上百张 */
+    private val lru = object : LruCache<String, ImageBitmap>(8 * 1024 * 1024) {
         override fun sizeOf(key: String, value: ImageBitmap): Int {
             val bmp = value.asAndroidBitmap()
             return bmp.byteCount / 1024
@@ -78,14 +79,14 @@ object CoverCache {
         }
 
     /**
-     * 预解码全部专辑封面（进入专辑流时后台跑一次）。
-     * 4 路并行：串行解几十张要 1~3 秒，期间滑动到未命中的卡片会闪占位图；
-     * 并行填缓存大幅缩短这个窗口。未命中缓存的才解，二次进入几乎瞬时完成。
+     * 预解码封面（进入专辑流时后台跑一次）。
+     * 低性能设备优化：2 路并发（原 4 路在手表上瞬间打满 CPU → 音频欠载卡顿），
+     * 且目标尺寸降到 128px，整批解码开销大幅下降。未命中缓存的才解。
      */
     suspend fun preloadAll(context: Context, albums: List<Album>) =
         withContext(Dispatchers.IO) {
             val pending = albums.filter { get(it) == null }
-            pending.chunked(4).forEach { batch ->
+            pending.chunked(2).forEach { batch ->
                 coroutineScope {
                     batch.map { a ->
                         async { decode(context, a)?.let { put(a, it) } }

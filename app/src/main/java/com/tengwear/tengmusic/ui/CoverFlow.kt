@@ -234,14 +234,18 @@ fun AlbumCoverFlow(
                 stillFrames++
                 // 30ms 轮询 + 3 帧阈值 ≈ 停止后 90ms 内吸附归位；
                 // 此前 60ms×8 帧 ≈ 0.5s 才吸附，表冠翻页后要"卡"半秒才回正。
-                if (stillFrames >= 3) {
+                if (stillFrames >= 2) {
                     s.scrollToItem(centeredIndex.value)
                     stillFrames = 0
                 }
             } else {
                 stillFrames = 0
             }
-            delay(30)
+            // 低性能设备优化：静止时轮询降到 120ms（原来恒定 30ms，即使不滑动也
+            // 每 30ms 遍历 visibleItems 唤醒 CPU，长此以往抢占音频线程）；
+            // 滑动中保持 40ms 高频以保证回环/吸附跟手。静止时 offPx 基本为 0，
+            // 不需要高频检查，120ms 足够检测表冠的一次翻页并立刻切回高频。
+            delay(if (listState.isScrollInProgress) 40L else 120L)
         }
     }
 
