@@ -219,8 +219,12 @@ fun WearMusicApp(vm: PlayerViewModel) {
                 // ===== 专辑流（按专辑浏览）=====
                 AnimatedVisibility(
                     visible = showAlbumFlow,
-                    // 用回原本的从下滑入打开动画；黑屏根因已在 Cover.kt 修复（封面首帧即绘制）
-                    enter = slideInVertically(initialOffsetY = { it }),
+                    // 从下滑入改为固定 450ms 匀速：展开动画在滑入到 3/5 处（270ms）即启动，
+                    // 两者交叠衔接，消除此前"滑入停稳后才开始展开＝卡一下"的顿挫
+                    enter = slideInVertically(
+                        initialOffsetY = { it },
+                        animationSpec = tween(durationMillis = 450, easing = LinearEasing),
+                    ),
                     exit = ExitTransition.None,
                 ) {
                     Box(modifier = Modifier.fillMaxSize()) {

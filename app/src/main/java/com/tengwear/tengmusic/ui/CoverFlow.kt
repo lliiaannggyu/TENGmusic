@@ -10,6 +10,7 @@ import androidx.compose.animation.core.AnimationState
 import androidx.compose.animation.core.animateDecay
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.keyframes
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.rememberSplineBasedDecay
@@ -144,6 +145,8 @@ fun AlbumCoverFlow(
     // 动画进度用普通 State 承载：每帧写入会触发重组，保证渐显逐帧刷新
     // （Animatable.value 不是 State，直接读不会触发重组，之前动画"时有时无"就源于此）
     val animProgress = remember { mutableFloatStateOf(0f) }
+    // 展开完成后的回弹量（0→+3.5%→0）：所有卡片 scale 乘 (1+bounce)，作为展开收尾
+    val bounceScale = remember { mutableFloatStateOf(0f) }
     // 定位/回环跳转期间抑制「兜底归位」，否则会把刚定位好的列表又拽回去
     val suppressSnapUntil = remember { mutableStateOf(0L) }
 
@@ -270,15 +273,13 @@ fun AlbumCoverFlow(
         suppressSnapUntil.value = System.currentTimeMillis() + 900
         // 瞬时定位到当前专辑：绝不用动画滚动（否则打开瞬间会看到一串封面飞过＝像加载）
         state?.snapInstant(curContent)
-        // 两段式展开动画：
-        // 阶段0（0~360ms）：浮层 slideInVertically 滑入中，中心专辑全尺寸直接可见，
-        //   两侧隐藏 —— 中心不再被滑入动画抢戏；
-        // 阶段1（360~960ms）：中心「先收缩到 0.45 再弹出」，两侧按距离依次炸开
-        //   （v1.47 原版公式系数 5.5）。动画结束后 alpha/scale 锁死，杜绝闪卡。
+        // 展开动画与浮层滑入交叠（v1.61）：浮层匀速滑入 450ms，滑到 3/5 处（270ms）
+        // 就开始展开 —— 此前等滑入停稳（delay 360ms+）才开始，观感是"卡一下才展开"。
+        // 现在两者交叠 180ms，衔接连贯；中心专辑始终全尺寸可见，两侧依次炸开。
         animActive.value = true
         animStarted.value = false
         animProgress.value = 0f
-        delay(360)
+        delay(270)
         animStarted.value = true
         // 用 animate 逐帧写入普通 State（每帧触发重组，渐显才连续不卡）
         animate(0f, 1f, animationSpec = tween(durationMillis = 600, easing = LinearEasing)) { value, _ ->
@@ -286,6 +287,19 @@ fun AlbumCoverFlow(
         }
         animProgress.value = 1f
         animActive.value = false
+        // 展开完成后的回弹：整体 scale 先过冲 +3.5% 再落回 0（220ms），
+        // 所有已展开的卡片（含中心）一起轻轻弹一下，作为展开的收尾。
+        animate(
+            0f, 1f,
+            animationSpec = keyframes {
+                durationMillis = 220
+                0.035f at 100
+                0f at 220
+            },
+        ) { value, _ ->
+            bounceScale.value = value
+        }
+        bounceScale.value = 0f
     }
 
     // 进入专辑流即后台预解码全部封面进 LruCache：
@@ -388,30 +402,33 @@ fun AlbumCoverFlow(
                     },
                 ) { c ->
                     val real = realOf(c)
-                    // 两段式展开渲染：
-                    //  - 中心（正在播放的专辑）不做任何动画：从第一帧起全尺寸直接可见，
-                    //    跟随浮层正常滑出（用户要求：中心卡片不要收缩弹出）；
-                    //  - 两侧卡片按 v1.47 原版公式 (进度*5.5 - 距固定锚点距离) 依次炸开；
-                    //  - 动画结束 alpha/scale 恒 1，滑动/回环不再有透明度变化（防闪黑白）。
-                    val isCenter = c == startContentIdx.value
-                    val appear = when {
-                        !animActive.value -> 1f
-                        isCenter -> 1f
-                        !animStarted.value -> 0f
-                        else -> {
-                            val dist = abs(c - startContentIdx.value).toFloat()
-                            (animProgress.value * 5.5f - dist).coerceIn(0f, 1f)
-                        }
-                    }
-                    val sc = when {
-                        !animActive.value -> 1f
-                        isCenter -> 1f
-                        else -> 0.45f + 0.55f * appear
-                    }
+                    // 两段式展开渲染（v1.60 性能版）：
+                    // alpha/scale 的计算全部放进 graphicsLayer 的 lambda —— 在绘制
+                    // 阶段读取 animActive/animProgress 等 state，动画每帧只重绘、
+                    // 不重组（此前在组合期算好再传参，动画期间每帧所有可见卡片
+                    // 整卡重组，滑动叠加时直接掉帧）。防闪黑白逻辑不变：
+                    // 动画结束后 lambda 短路恒 1，滑动/回环不再有透明度变化。
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
                             .graphicsLayer {
+                                val active = animActive.value
+                                val started = animStarted.value
+                                val start = startContentIdx.value
+                                val isCenter = c == start
+                                val appear = when {
+                                    !active -> 1f
+                                    isCenter -> 1f
+                                    !started -> 0f
+                                    else -> {
+                                        val dist = abs(c - start).toFloat()
+                                        (animProgress.value * 5.5f - dist).coerceIn(0f, 1f)
+                                    }
+                                }
+                                val sc0 = if (!active || isCenter) 1f else 0.45f + 0.55f * appear
+                                // 回弹因子：展开动画结束后 bounceScale 从 0 过冲到 3.5% 再归零，
+                                // 所有卡片（含中心）整体 scale 轻弹一下作为收尾
+                                val sc = sc0 * (1f + bounceScale.value)
                                 alpha = appear
                                 scaleX = sc
                                 scaleY = sc

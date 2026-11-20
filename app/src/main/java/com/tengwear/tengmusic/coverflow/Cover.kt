@@ -37,10 +37,15 @@ internal fun Cover(
     // 等 onGloballyPositioned 回调后才集体亮起 => 就是「加载完才亮」。
     // 现在给一个合理的初始估算（列表项为 coverOffset 宽、中心在容器中心附近），
     // 封面从第一帧就绘制，测到真实坐标后再修正变换，期间始终可见。
+    //
+    // 性能关键（v1.60）：horizontalPosition 绝不能在组合阶段读取！滑动时每帧
+    // onGloballyPositioned 都会写入该 state，若在组合期读取（旧代码在这里算
+    // distanceToCenter 再传给参数式 graphicsLayer），每张可见卡片每帧整卡重组，
+    // 快速滑动直接掉帧。现在 3D 变换全部放进 graphicsLayer 的 lambda —— 在
+    // 绘制阶段读取 state，只触发重绘，滑动零重组。
     var horizontalPosition by remember {
         mutableStateOf<Float>(geometry.containerCenterForPosition - geometry.coverOffset / 2f)
     }
-    val distanceToCenter = geometry.distanceToCenter(horizontalPosition)
 
     // This box is used to space the elements horizontally and to give them the proper z index.
     Box(
@@ -48,27 +53,30 @@ internal fun Cover(
             .width(with(LocalDensity.current) { Dp(geometry.coverOffset / LocalDensity.current.density) })
             .zIndex(zIndexHint)
             .onGloballyPositioned { coordinates ->
-                horizontalPosition = coordinates.positionInParent().x
+                val pos = coordinates.positionInParent().x
+                horizontalPosition = pos
+                // isSelected 只在「哪张卡片越过中心」时变化，放在布局回调里判断
+                // （组合阶段读取会引发每帧重组）；selectedIndex 是普通变量，
+                // 布局期写入安全，不会产生重组循环。
+                onSelectedHandler(geometry.isSelected(pos))
             },
         contentAlignment = Alignment.Center,
     ) {
-        // 不再等待坐标：封面首帧即绘制，杜绝打开黑屏。
-        // we use geometry to check whether an element is selected. That is if it's in the
-        // center.
-        onSelectedHandler(geometry.isSelected(horizontalPosition))
-
-            // This Box applies the transformation effects: rotation, horizontal shift, and zoom
-            Box(
-                modifier = Modifier
-                    .requiredSize(with(LocalDensity.current) { Dp(geometry.coverSize / LocalDensity.current.density) })
-                    .graphicsLayer(
-                        rotationY = geometry.rotation(distanceToCenter),
-                        translationX = geometry.translationX(distanceToCenter),
-                        scaleY = geometry.scale(distanceToCenter),
-                        scaleX = geometry.scale(distanceToCenter),
-                    ),
-                propagateMinConstraints = true,
-            ) {
+        // This Box applies the transformation effects: rotation, horizontal shift, and zoom
+        Box(
+            modifier = Modifier
+                .requiredSize(with(LocalDensity.current) { Dp(geometry.coverSize / LocalDensity.current.density) })
+                .graphicsLayer {
+                    // 绘制阶段读取 horizontalPosition：滑动每帧只重绘（改旋转/缩放），
+                    // 不再触发任何重组 —— 这是滑动卡顿的根治点。
+                    val d = geometry.distanceToCenter(horizontalPosition)
+                    rotationY = geometry.rotation(d)
+                    translationX = geometry.translationX(d)
+                    scaleX = geometry.scale(d)
+                    scaleY = geometry.scale(d)
+                },
+            propagateMinConstraints = true,
+        ) {
                 val interactionSource = remember { MutableInteractionSource() }
                 if (geometry.params.mirror) {
                     Mirror(
