@@ -4,6 +4,8 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.slideInVertically
@@ -204,10 +206,15 @@ fun WearMusicApp(vm: PlayerViewModel) {
                 // ===== 搜索与统计页：播放页下滑打开（从顶部滑入），上滑原路滑回 =====
                 AnimatedVisibility(
                     visible = showStats,
-                    enter = slideInVertically(initialOffsetY = { -it }),
-                    // 原路返回：从顶部滑入，退出就往顶部滑出（整页上移回去），
-                    // 而不是往下沉半截再突然消失。
-                    exit = slideOutVertically(targetOffsetY = { -it }),
+                    // 淡入 + 小幅反向滑入：覆盖层快速铺满盖住底层，避免过渡帧
+                    // 露出底下的 HorizontalPager 页面造成「其他页面一闪而过」。
+                    enter = fadeIn(tween(180)) + slideInVertically(
+                        animationSpec = tween(200), initialOffsetY = { -it / 10 }
+                    ),
+                    // 原路返回：往顶部小幅滑出 + 淡出
+                    exit = fadeOut(tween(150)) + slideOutVertically(
+                        animationSpec = tween(180), targetOffsetY = { -it / 10 }
+                    ),
                 ) {
                     SearchStatsScreen(
                         vm = vm,
@@ -219,11 +226,11 @@ fun WearMusicApp(vm: PlayerViewModel) {
                 // ===== 专辑流（按专辑浏览）=====
                 AnimatedVisibility(
                     visible = showAlbumFlow,
-                    // 从下滑入改为固定 450ms 匀速：展开动画在滑入到 3/5 处（270ms）即启动，
-                    // 两者交叠衔接，消除此前"滑入停稳后才开始展开＝卡一下"的顿挫
-                    enter = slideInVertically(
-                        initialOffsetY = { it },
-                        animationSpec = tween(durationMillis = 450, easing = LinearEasing),
+                    // 淡入 + 小幅滑入：覆盖层快速铺满盖住底层 pager 页面，避免
+                    // 整屏从外滑入时露出别的页面一闪而过；展开动画仍按 3/5 处交叠启动。
+                    enter = fadeIn(tween(180)) + slideInVertically(
+                        initialOffsetY = { it / 10 },
+                        animationSpec = tween(durationMillis = 300, easing = LinearEasing),
                     ),
                     exit = ExitTransition.None,
                 ) {

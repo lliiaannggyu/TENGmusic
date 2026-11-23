@@ -192,8 +192,11 @@ fun AlbumCoverFlow(
             val cl = cloneHolder.value
             val ac = albumsHolder.value.size
             if (total <= 0 || ac <= 0) { delay(60); continue }
-            // computeCenteredIndex 返回 content 下标
-            val newContent = computeCenteredIndex(listState, total)
+            // 一次 layoutInfo 遍历同时求出中心下标与像素偏移：此前两个函数各自访问
+            // layoutInfo（每次访问都分配可见项快照），滑动中每 40ms 多一倍对象分配
+            // 加重 GC —— GC 暂停同样会卡音频线程。
+            val snap = centeredSnapshot(listState)
+            val newContent = if (snap.first < 0) 0 else (snap.first - 1).coerceIn(0, total - 1)
             if (newContent != centeredIndex.value) {
                 centeredIndex.value = newContent
                 if (System.currentTimeMillis() >= buzzSuppressUntil.value) {
@@ -230,7 +233,7 @@ fun AlbumCoverFlow(
                     continue
                 }
             }
-            val offPx = centerOffsetPx(listState)
+            val offPx = snap.second
             if (!listState.isScrollInProgress && abs(offPx) > snapTolerancePx &&
                 System.currentTimeMillis() >= suppressSnapUntil.value
             ) {
@@ -273,13 +276,12 @@ fun AlbumCoverFlow(
         suppressSnapUntil.value = System.currentTimeMillis() + 900
         // 瞬时定位到当前专辑：绝不用动画滚动（否则打开瞬间会看到一串封面飞过＝像加载）
         state?.snapInstant(curContent)
-        // 展开动画与浮层滑入交叠（v1.61）：浮层匀速滑入 450ms，滑到 3/5 处（270ms）
-        // 就开始展开 —— 此前等滑入停稳（delay 360ms+）才开始，观感是"卡一下才展开"。
-        // 现在两者交叠 180ms，衔接连贯；中心专辑始终全尺寸可见，两侧依次炸开。
+        // 展开动画与浮层滑入交叠（v1.62）：浮层匀速滑入 300ms，滑到 3/5 处（180ms）
+        // 就开始展开 —— 两者交叠 120ms，衔接连贯无停顿；中心专辑始终全尺寸可见。
         animActive.value = true
         animStarted.value = false
         animProgress.value = 0f
-        delay(270)
+        delay(180)
         animStarted.value = true
         // 用 animate 逐帧写入普通 State（每帧触发重组，渐显才连续不卡）
         animate(0f, 1f, animationSpec = tween(durationMillis = 600, easing = LinearEasing)) { value, _ ->
@@ -287,13 +289,13 @@ fun AlbumCoverFlow(
         }
         animProgress.value = 1f
         animActive.value = false
-        // 展开完成后的回弹：整体 scale 先过冲 +3.5% 再落回 0（220ms），
-        // 所有已展开的卡片（含中心）一起轻轻弹一下，作为展开的收尾。
+        // 展开完成后的左右回弹：bounce 从 0 过冲到 1 再归 0（220ms），两侧卡片按
+        // 各自方位沿水平方向弹开 10dp 再收回，作为展开的收尾（中心卡片不动）。
         animate(
             0f, 1f,
             animationSpec = keyframes {
                 durationMillis = 220
-                0.035f at 100
+                1f at 90
                 0f at 220
             },
         ) { value, _ ->
@@ -425,13 +427,18 @@ fun AlbumCoverFlow(
                                         (animProgress.value * 5.5f - dist).coerceIn(0f, 1f)
                                     }
                                 }
-                                val sc0 = if (!active || isCenter) 1f else 0.45f + 0.55f * appear
-                                // 回弹因子：展开动画结束后 bounceScale 从 0 过冲到 3.5% 再归零，
-                                // 所有卡片（含中心）整体 scale 轻弹一下作为收尾
-                                val sc = sc0 * (1f + bounceScale.value)
+                                val sc = if (!active || isCenter) 1f else 0.45f + 0.55f * appear
                                 alpha = appear
                                 scaleX = sc
                                 scaleY = sc
+                                // 左右回弹（v1.62）：展开完成后，两侧卡片沿水平方向
+                                // 向外弹一下再归位（左侧往左、右侧往右），中心卡片不动。
+                                // 此前误做成全屏缩放过冲，已纠正。
+                                val bounce = bounceScale.value
+                                if (!isCenter && bounce > 0f) {
+                                    val dir = if (c < startContentIdx.value) -1f else 1f
+                                    translationX = dir * bounce * 10.dp.toPx()
+                                }
                             }
                     ) {
                         albums.getOrNull(real)?.let { AlbumArtContent(album = it) }
@@ -497,29 +504,12 @@ private fun buzz(vibrator: Vibrator?, durationMs: Int, amplitude: Int) {
     }
 }
 
-/** 根据可见项布局找出最靠近视口中心的项，换算成专辑下标（-1 = 首尾 spacer） */
-private fun computeCenteredIndex(listState: LazyListState, count: Int): Int {
-    if (count <= 0) return 0
+/** 一次 layoutInfo 遍历同时求出：最靠近视口中心的项下标（-1 = 首尾 spacer）
+ *  和它相对视口中心的像素偏移（兜底归中判断用）。 */
+private fun centeredSnapshot(listState: LazyListState): Pair<Int, Float> {
     val layout = listState.layoutInfo
     val viewportCenter = layout.viewportSize.width / 2f
     var best = -1
-    var bestDist = Float.MAX_VALUE
-    for (item in layout.visibleItemsInfo) {
-        val center = item.offset + item.size / 2f
-        val d = abs(center - viewportCenter)
-        if (d < bestDist) {
-            bestDist = d
-            best = item.index
-        }
-    }
-    return if (best < 0) 0 else (best - 1).coerceIn(0, count - 1)
-}
-
-/** 当前最靠近视口中心的项相对视口中心的像素偏移（兜底归中判断用） */
-private fun centerOffsetPx(listState: LazyListState): Float {
-    val layout = listState.layoutInfo
-    if (layout.visibleItemsInfo.isEmpty()) return 0f
-    val viewportCenter = layout.viewportSize.width / 2f
     var bestDist = Float.MAX_VALUE
     var bestOff = 0f
     for (item in layout.visibleItemsInfo) {
@@ -527,10 +517,11 @@ private fun centerOffsetPx(listState: LazyListState): Float {
         val d = abs(center - viewportCenter)
         if (d < bestDist) {
             bestDist = d
+            best = item.index
             bestOff = center - viewportCenter
         }
     }
-    return bestOff
+    return Pair(best, bestOff)
 }
 
 /** 专辑封面内容：铺满方形封面 + 轻微边框（无封面显示音符占位） */
@@ -544,7 +535,9 @@ private fun AlbumArtContent(album: Album) {
     }
     LaunchedEffect(album.albumId, album.customCoverUri) {
         if (bmp == null) {
-            CoverCache.decode(context, album)?.let {
+            // 串行现场解码（Mutex 串行化）：滑动中多张未缓存卡片同时并发解码会
+            // 打满 CPU 小核、音频线程被饿死 → 一滑动音乐就断续。串行后峰值减半。
+            CoverCache.decodeLive(context, album)?.let {
                 CoverCache.put(album, it)
                 bmp = it
             }

@@ -6,6 +6,7 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
@@ -123,14 +124,18 @@ fun SkinPlayerScreen(
     val density = LocalDensity.current
     val themeColor = Color(android.graphics.Color.parseColor("#34C7F4"))
 
-    // 波浪盘自转周期由皮肤 progress 控件的 waveSpeed 决定
+    // 波浪盘自转周期由皮肤 progress 控件的 waveSpeed 决定。
+    // 受 active 控制的手动循环：页面不可见时停止重绘，不再后台空转抢 CPU/音频。
     val waveSpeed = skin.widgets.firstOrNull { it.id == "progress" && it.ringStyle == "wave" }?.waveSpeed ?: 16000
-    val phase by rememberInfiniteTransition(label = "skinWave").animateFloat(
-        initialValue = 0f, targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(waveSpeed, easing = LinearEasing), repeatMode = RepeatMode.Restart,
-        ), label = "skinWavePhase",
-    )
+    var phase by remember { mutableFloatStateOf(0f) }
+    LaunchedEffect(active) {
+        if (!active) return@LaunchedEffect
+        while (isActive) {
+            animate(0f, 1f, animationSpec = tween(waveSpeed, easing = LinearEasing)) { value, _ ->
+                phase = value
+            }
+        }
+    }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val S: Dp = minOf(maxWidth, maxHeight)

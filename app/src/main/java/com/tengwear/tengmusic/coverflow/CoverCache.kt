@@ -12,6 +12,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
@@ -76,6 +78,21 @@ object CoverCache {
             } catch (t: Throwable) {
                 null
             }
+        }
+
+    /**
+     * 滑动中的现场解码（串行）：AlbumArtContent 缓存未命中时逐张触发。
+     * 必须用 Mutex 串行化 —— 滑动中快速掠过未缓存区域时，多个可见卡片同时
+     * 并发解码会把低端手表仅有的几个 CPU 小核全部打满，音频线程被饿死，
+     * 直接表现为「一滑动音乐就断续」。串行后同一时刻只有一张图在解码，
+     * CPU 峰值减半，音频不再欠载；解码期间该卡片短暂显示占位，不闪卡。
+     */
+    private val liveDecodeMutex = Mutex()
+
+    suspend fun decodeLive(context: Context, album: Album): ImageBitmap? =
+        liveDecodeMutex.withLock {
+            // 拿到锁后再查一次缓存：排在前面等待的那张可能已经解码完成
+            get(album) ?: decode(context, album)
         }
 
     /**

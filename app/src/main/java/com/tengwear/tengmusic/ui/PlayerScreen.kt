@@ -6,6 +6,7 @@ import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
@@ -459,6 +460,7 @@ fun WearPlayerScreen(
                                             // 顺带盖掉连续 seek 导致的 BUFFERING 播放/暂停形态抖动
                                             isPlaying = isPlaying && !isSeekingNow,
                                             accent = themeColor,
+                                            active = active,
                                         )
                                         PlayPauseButton(
                                             isPlaying = isPlaying,
@@ -904,18 +906,23 @@ private fun WavyDial(
     progress: () -> Float,
     isPlaying: Boolean,
     accent: Color,
+    active: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
-    // 波形旋转相位：16s/圈线性循环（暂停时继续转，三层永远同步）
-    val phase by rememberInfiniteTransition(label = "wavePhase").animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 16000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart,
-        ),
-        label = "wavePhase",
-    )
+    // 波形旋转相位：16s/圈线性循环。改为受 active 控制的手动循环 ——
+    // HorizontalPager 的页面切走/被专辑流覆盖后并不会销毁，此前用
+    // rememberInfiniteTransition 会一直在后台每帧重绘 Canvas，抢 CPU 让音频
+    // 欠载（滑动专辑流时声音卡）。现在页面不可见(active=false)时 LaunchedEffect
+    // 取消、相位冻结、Canvas 停止重绘；重新可见时从当前相位继续转，视觉无跳变。
+    var phase by remember { mutableFloatStateOf(0f) }
+    LaunchedEffect(active) {
+        if (!active) return@LaunchedEffect
+        while (isActive) {
+            animate(0f, 1f, animationSpec = tween(durationMillis = 16000, easing = LinearEasing)) { value, _ ->
+                phase = value
+            }
+        }
+    }
     // v1.43：暂停时波幅收到 0 → 整体变回正圆（播放/暂停间平滑过渡）
     val ampF by animateFloatAsState(
         targetValue = if (isPlaying) 1f else 0f,
