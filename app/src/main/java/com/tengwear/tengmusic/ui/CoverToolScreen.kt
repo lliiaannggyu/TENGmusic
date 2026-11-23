@@ -61,8 +61,8 @@ private fun themeAccentDim(): Color = com.tengwear.tengmusic.AppTheme.withAlpha(
 /** 用户选中的一张待匹配图片（文件名 + 压缩后的 JPEG 字节） */
 private class PickedImage(val name: String, val bytes: ByteArray)
 
-/** 一条自动匹配结果：图片 ↔ 歌曲，score 为文件名重合字符数 */
-private class CoverPair(val track: Track, val image: PickedImage, val score: Int)
+/** 一条专辑级匹配结果：图片 ↔ 专辑（写入时覆盖该专辑全部歌曲），score 为重合字符数 */
+private class CoverPair(val album: String, val tracks: List<Track>, val image: PickedImage, val score: Int)
 
 /**
  * 封面工具：给音频文件（MP3）写入专辑封面。
@@ -71,11 +71,12 @@ private class CoverPair(val track: Track, val image: PickedImage, val score: Int
  * 1. **单曲写入**：点选一首歌 → 内置文件管理器（App 专属 covers 文件夹、零权限、不调系统选择器）
  *    勾选一张图 → 居中裁方 + 压缩为 512px JPEG → 覆盖写回文件（ID3v2.3 APIC 帧，见 Id3Tag）。
  *    **已带封面的歌曲点击即为替换封面**，卡片右侧徽标显示「替换 / 添加」，写入成功后即时翻转。
- * 2. **批量匹配**（参考 GitHub 高星音乐标签编辑器 Lyrico 1259★ 的批量标签处理形态）：
- *    在文件管理器勾选多张图片 → 按「歌名/文件名 与 图片文件名 最长公共子串 ≥ 3 字符」自动判定
- *    对应封面 → **先把匹配结果列出来给用户看**（可逐条移除）→ 用户确认后批量写入。
+ * 2. **专辑级批量匹配**：
+ *    在文件管理器勾选多张图片 → 用「专辑名」与图片文件名匹配：
+ *    专辑名 ≥2 字需 ≥2 字重合、单字专辑 1 字即可 → 命中后把该图写进该专辑【所有歌曲】。
+ *    **先把匹配结果列出来给用户看**（可逐条移除）→ 用户确认后批量写入。
  *
- * 未匹配上的图片不会写入任何歌曲；一首歌只分配一张图（重合字符最多者）。
+ * 未匹配上的图片不会写入任何歌曲；一个专辑只用一张图（重合字符最多者）。
  */
 @Composable
 fun CoverToolScreen(vm: PlayerViewModel, onClose: () -> Unit) {
@@ -189,7 +190,7 @@ fun CoverToolScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                     ) {
                         Text("多选图片 · 自动匹配", fontSize = 11.sp)
                         Text(
-                            "在文件管理器勾选图片 → 歌名/文件名与图片名重合 ≥3 字符即判定为对应封面",
+                            "选图片 → 专辑名与图片名重合≥2字即匹配（单字专辑1字即可）→ 写入该专辑所有歌曲",
                             fontSize = 8.sp,
                             color = Color.Gray,
                         )
@@ -209,10 +210,10 @@ fun CoverToolScreen(vm: PlayerViewModel, onClose: () -> Unit) {
 
                 // ========== 匹配结果（先列出来给用户看，可逐条移除）==========
                 if (pairs.isNotEmpty()) {
-                    item { ListHeader { Text("匹配结果（${pairs.size} 对）") } }
+                    item { ListHeader { Text("匹配结果（${pairs.size} 个专辑）") } }
                     item {
                         Text(
-                            "点 × 移除该对；确认后点「全部写入」",
+                            "点 × 移除；确认后点「写入全部」→ 封面写入各专辑所有歌曲",
                             fontSize = 8.sp,
                             color = Color.Gray,
                             textAlign = TextAlign.Center,
@@ -236,12 +237,12 @@ fun CoverToolScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                             ) {
                                 Column(Modifier.weight(1f)) {
                                     Text(
-                                        text = "🎵 ${pair.track.title}",
+                                        text = "💿 ${pair.album}（${pair.tracks.size} 首）",
                                         fontSize = 11.sp,
                                         maxLines = 1,
                                     )
                                     Text(
-                                        text = "🖼 ${pair.image.name}（重合 ${pair.score} 字符）",
+                                        text = "🖼 ${pair.image.name}（重合 ${pair.score} 字）",
                                         fontSize = 8.sp,
                                         color = Color.Gray,
                                         maxLines = 1,
@@ -275,7 +276,12 @@ fun CoverToolScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                     item {
                         Button(
                             onClick = {
-                                vm.writeCoverArtBatch(pairs.map { it.track to it.image.bytes })
+                                // 一个专辑匹配一张图 → 展开成该专辑【所有歌曲】逐首写入
+                                vm.writeCoverArtBatch(
+                                    pairs.flatMap { pair ->
+                                        pair.tracks.map { it to pair.image.bytes }
+                                    }
+                                )
                                 pairs = emptyList()
                                 unmatchedImages = emptyList()
                             },
@@ -283,7 +289,10 @@ fun CoverToolScreen(vm: PlayerViewModel, onClose: () -> Unit) {
                                 .fillMaxWidth(0.72f)
                                 .padding(vertical = 4.dp),
                         ) {
-                            Text("全部写入（${pairs.size}）", fontSize = 11.sp)
+                            Text(
+                                "写入全部（${pairs.sumOf { it.tracks.size }} 首）",
+                                fontSize = 11.sp,
+                            )
                         }
                     }
                     item {
@@ -398,10 +407,10 @@ private fun normalizeName(name: String): String {
 
 /**
  * 两字符串的最长公共子串长度（滚动数组 DP，O(n·m)）。
- * ≥3 即认为「有重合」——封面工具自动匹配的判定阈值。
+ * 不设最小长度门槛：专辑名单字时也要能算出 1 字符的重合。
  */
 private fun longestCommonSubstring(a: String, b: String): Int {
-    if (a.length < 3 || b.length < 3) return 0
+    if (a.isEmpty() || b.isEmpty()) return 0
     val dp = IntArray(b.length + 1)
     var best = 0
     for (i in a.indices) {
@@ -417,9 +426,13 @@ private fun longestCommonSubstring(a: String, b: String): Int {
 }
 
 /**
- * 自动匹配：曲目（歌名 title / 文件名 displayName 取最佳）↔ 图片文件名，
- * 最长公共子串 ≥ [MATCH_THRESHOLD] 字符即判定为对应封面。
- * 贪心分配：按重合字符数从高到低，一张图只配一首歌，一首歌只配一张图。
+ * 专辑级自动匹配：用「专辑名」去匹配图片文件名，命中后把该图片写进该专辑的【所有歌曲】。
+ *
+ * 匹配阈值随专辑名长度自适应：
+ *  - 专辑名 ≥ 2 个字 → 需与图片名有 ≥ 2 个连续字符相同；
+ *  - 专辑名仅 1 个字 → 只需 1 个字符相同即可。
+ *
+ * 贪心分配：按重合字符数从高到低，一张图只配一个专辑，一个专辑只用一张图。
  *
  * @return (匹配对列表, 未匹配图片名列表)
  */
@@ -427,38 +440,44 @@ private fun matchCovers(
     tracks: List<Track>,
     images: List<PickedImage>,
 ): Pair<List<CoverPair>, List<String>> {
-    data class Candidate(val trackIdx: Int, val imageIdx: Int, val score: Int)
+    data class Candidate(val album: String, val imageIdx: Int, val score: Int)
 
+    // 按专辑名分组（同名专辑的歌曲归到一起）
+    val tracksByAlbum = tracks.groupBy { it.album }
     val candidates = mutableListOf<Candidate>()
     val normImages = images.map { normalizeName(it.name) }
-    tracks.forEachIndexed { ti, t ->
-        val normTitle = normalizeName(t.title)
-        val normFile = normalizeName(t.displayName)
+
+    tracksByAlbum.keys.forEach { album ->
+        val normAlbum = normalizeName(album)
+        if (normAlbum.isEmpty()) return@forEach
+        // 阈值：专辑名 1 字 → 1；≥2 字 → 2
+        val threshold = if (normAlbum.length <= 1) 1 else 2
         normImages.forEachIndexed { ii, normImg ->
-            val score = maxOf(
-                longestCommonSubstring(normTitle, normImg),
-                longestCommonSubstring(normFile, normImg),
-            )
-            if (score >= MATCH_THRESHOLD) {
-                candidates.add(Candidate(ti, ii, score))
+            val score = longestCommonSubstring(normAlbum, normImg)
+            if (score >= threshold) {
+                candidates.add(Candidate(album, ii, score))
             }
         }
     }
     candidates.sortByDescending { it.score }
-    val usedTracks = mutableSetOf<Int>()
+    val usedAlbums = mutableSetOf<String>()
     val usedImages = mutableSetOf<Int>()
     val pairs = mutableListOf<CoverPair>()
     for (c in candidates) {
-        if (c.trackIdx in usedTracks || c.imageIdx in usedImages) continue
-        usedTracks.add(c.trackIdx)
+        if (c.album in usedAlbums || c.imageIdx in usedImages) continue
+        usedAlbums.add(c.album)
         usedImages.add(c.imageIdx)
-        pairs.add(CoverPair(tracks[c.trackIdx], images[c.imageIdx], c.score))
+        pairs.add(
+            CoverPair(
+                c.album,
+                tracksByAlbum[c.album].orEmpty(),
+                images[c.imageIdx],
+                c.score,
+            )
+        )
     }
     val unmatched = images.mapIndexedNotNull { i, img ->
         if (i in usedImages) null else img.name
     }
     return pairs to unmatched
 }
-
-/** 文件名重合字符数达到该值即自动判定为对应封面 */
-private const val MATCH_THRESHOLD = 3

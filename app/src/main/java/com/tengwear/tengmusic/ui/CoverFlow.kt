@@ -10,7 +10,6 @@ import androidx.compose.animation.core.AnimationState
 import androidx.compose.animation.core.animateDecay
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.keyframes
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.rememberSplineBasedDecay
@@ -281,27 +280,23 @@ fun AlbumCoverFlow(
         animActive.value = true
         animStarted.value = false
         animProgress.value = 0f
+        bounceScale.value = 0f
         delay(180)
         animStarted.value = true
-        // 用 animate 逐帧写入普通 State（每帧触发重组，渐显才连续不卡）
+        // 展开：线性 tween 逐张炸开（用户认可的"从中间向两边展开"）
         animate(0f, 1f, animationSpec = tween(durationMillis = 600, easing = LinearEasing)) { value, _ ->
             animProgress.value = value
         }
         animProgress.value = 1f
         animActive.value = false
-        // 展开完成后的左右回弹：bounce 从 0 过冲到 1 再归 0（220ms），两侧卡片按
-        // 各自方位沿水平方向弹开 10dp 再收回，作为展开的收尾（中心卡片不动）。
-        animate(
-            0f, 1f,
-            animationSpec = keyframes {
-                durationMillis = 220
-                1f at 90
-                0f at 220
-            },
-        ) { value, _ ->
+        // 展开完成后的柔和单次回弹：bounceScale 从 0 匀速走到 1（360ms），
+        // 渲染端用余弦脉冲 (1−cos(2πt))/2 把它映射成"平滑涨起→圆弧顶点→平滑回落"，
+        // 弹一次即收。旧实现用 keyframes 线性三段、顶点硬折返、10dp 大位移，
+        // 观感就是抽搐式"抖尿"；这里全程 C1 连续、位移收到 6dp，柔和自然。
+        animate(0f, 1f, animationSpec = tween(durationMillis = 360, easing = LinearEasing)) { value, _ ->
             bounceScale.value = value
         }
-        bounceScale.value = 0f
+        bounceScale.value = 1f
     }
 
     // 进入专辑流即后台预解码全部封面进 LruCache：
@@ -431,13 +426,14 @@ fun AlbumCoverFlow(
                                 alpha = appear
                                 scaleX = sc
                                 scaleY = sc
-                                // 左右回弹（v1.62）：展开完成后，两侧卡片沿水平方向
-                                // 向外弹一下再归位（左侧往左、右侧往右），中心卡片不动。
-                                // 此前误做成全屏缩放过冲，已纠正。
+                                // 左右回弹（v1.65）：展开完成后两侧卡片沿水平方向柔和弹一下。
+                                // 余弦脉冲 0→峰→0 全程平滑（顶点圆弧过渡无硬折点），
+                                // 弹一次即收；bounceScale=1 时 pulse=0，无残留位移。
                                 val bounce = bounceScale.value
-                                if (!isCenter && bounce > 0f) {
-                                    val dir = if (c < startContentIdx.value) -1f else 1f
-                                    translationX = dir * bounce * 10.dp.toPx()
+                                if (!isCenter && bounce < 1f) {
+                                    val pulse = (1f - kotlin.math.cos(bounce * 2f * kotlin.math.PI.toFloat())) / 2f
+                                    val dir = if (c < start) -1f else 1f
+                                    translationX = dir * pulse * 6.dp.toPx()
                                 }
                             }
                     ) {
