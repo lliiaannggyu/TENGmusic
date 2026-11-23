@@ -909,17 +909,47 @@ private fun WavyDial(
     active: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
-    // 波形旋转相位：16s/圈线性循环。改为受 active 控制的手动循环 ——
-    // HorizontalPager 的页面切走/被专辑流覆盖后并不会销毁，此前用
-    // rememberInfiniteTransition 会一直在后台每帧重绘 Canvas，抢 CPU 让音频
-    // 欠载（滑动专辑流时声音卡）。现在页面不可见(active=false)时 LaunchedEffect
-    // 取消、相位冻结、Canvas 停止重绘；重新可见时从当前相位继续转，视觉无跳变。
+    // 波形旋转相位：受 active + isPlaying 双控 —— 页面不可见或暂停时彻底冻结，
+    // Canvas 停止重绘（暂停时波幅已收敛成正圆，转相位毫无视觉意义，纯浪费 CPU）。
     var phase by remember { mutableFloatStateOf(0f) }
-    LaunchedEffect(active) {
-        if (!active) return@LaunchedEffect
-        while (isActive) {
-            animate(0f, 1f, animationSpec = tween(durationMillis = 16000, easing = LinearEasing)) { value, _ ->
+    LaunchedEffect(active, isPlaying) {
+        if (!active || !isPlaying) return@LaunchedEffect
+        while (isActive && isPlaying) {
+            val from: Float = phase
+            animate(from, from + 1f, animationSpec = tween(16000, easing = LinearEasing)) { value, _ ->
                 phase = value
+            }
+            // 相位单调增长，超过 1024 整圈时归零（1024 圈=整数个 2π，cos/sin 完全不变），
+            // 避免长时间运行后浮点精度下降。
+            if (phase > 1024f) phase -= 1024f
+        }
+    }
+    // ===== 三角查表（低端设备性能优化，视觉完全不变）=====
+    // 原实现每帧 3 条 Path×240 点×3 次 sin/cos ≈ 2160 次三角函数，60fps = 每秒 13 万次，
+    // 低端 Wear 设备 CPU 扛不住 → 主线程掉帧 + 音频欠载（声音卡）。
+    // 现用和角公式：cos(k(t−φ)) = cos(kt)·cos(kφ) + sin(kt)·sin(kφ)。
+    // kt（采样点固定）与 kφ（每帧一次）分离：每帧只算 2 次三角函数，其余全是查表乘加。
+    val lobes = 10
+    val sampleN = 120                       // 采样点 240→120（手表小屏肉眼无损）
+    val twoPi = 2f * kotlin.math.PI.toFloat()
+    val halfPi = kotlin.math.PI.toFloat() / 2f
+    // 表项：[0]=cos(t) [1]=sin(t) [2]=cos(lobes·t) [3]=sin(lobes·t)
+    val circleTbl = remember {
+        Array(4) { FloatArray(sampleN + 1) }.also { t ->
+            for (i in 0..sampleN) {
+                val a = i * twoPi / sampleN
+                t[0][i] = kotlin.math.cos(a); t[1][i] = kotlin.math.sin(a)
+                t[2][i] = kotlin.math.cos(lobes * a); t[3][i] = kotlin.math.sin(lobes * a)
+            }
+        }
+    }
+    // 进度弧从 12 点方向起：t = −π/2 + i·2π/sampleN（与 frac 无关，可同样查表）
+    val arcTbl = remember {
+        Array(4) { FloatArray(sampleN + 1) }.also { t ->
+            for (i in 0..sampleN) {
+                val a = -halfPi + i * twoPi / sampleN
+                t[0][i] = kotlin.math.cos(a); t[1][i] = kotlin.math.sin(a)
+                t[2][i] = kotlin.math.cos(lobes * a); t[3][i] = kotlin.math.sin(lobes * a)
             }
         }
     }
@@ -932,25 +962,24 @@ private fun WavyDial(
     Canvas(modifier.size(dialSize)) {
         val c = center
         val R = size.minDimension / 2f
-        val lobes = 10                          // 波瓣数（与参考图一致）
         val rt = R * 0.825f                     // 轨道中心线基准半径
-        val amp = rt * 0.048f                   // 波幅（v1.45 再矮；轨道与色块共用 → 严格平行）
-        val strokeW = R * 0.108f                // 轨道线宽（v1.45 再加粗）
-        val gap = R * 0.072f                    // 暗缝（v1.45 加大 → 色块随之变小）
+        val amp = rt * 0.048f                   // 波幅
+        val strokeW = R * 0.108f                // 轨道线宽
+        val gap = R * 0.072f                    // 暗缝
         val offset = strokeW / 2f + gap         // 色块边缘 = 波浪线内移量
-        val phi = phase * 2f * kotlin.math.PI.toFloat()
-        val n = 240                             // 每条路径采样点数（足够平滑）
-        val step = 2f * kotlin.math.PI.toFloat() / n
-
-        fun waveR(theta: Float): Float = rt + amp * ampF * kotlin.math.cos(lobes * (theta - phi))
+        // 每帧仅 2 次三角函数：kφ 的正余弦，把旋转相位带入和角公式
+        val kphi = lobes * phase * twoPi
+        val cosPhi = kotlin.math.cos(kphi)
+        val sinPhi = kotlin.math.sin(kphi)
+        val ampA = amp * ampF
 
         // —— ① 实心波浪色块：r = r(θ) − offset（逐点平行于轨道） ——
         val disc = Path()
-        for (i in 0..n) {
-            val t = i * step
-            val r = waveR(t) - offset
-            val x = c.x + r * kotlin.math.cos(t)
-            val y = c.y + r * kotlin.math.sin(t)
+        for (i in 0..sampleN) {
+            val wr = circleTbl[2][i] * cosPhi + circleTbl[3][i] * sinPhi  // cos(k(θ−φ))
+            val r = rt + ampA * wr - offset
+            val x = c.x + r * circleTbl[0][i]
+            val y = c.y + r * circleTbl[1][i]
             if (i == 0) disc.moveTo(x, y) else disc.lineTo(x, y)
         }
         disc.close()
@@ -958,11 +987,11 @@ private fun WavyDial(
 
         // —— ② 整圈波浪轨道 ——
         val track = Path()
-        for (i in 0..n) {
-            val t = i * step
-            val r = waveR(t)
-            val x = c.x + r * kotlin.math.cos(t)
-            val y = c.y + r * kotlin.math.sin(t)
+        for (i in 0..sampleN) {
+            val wr = circleTbl[2][i] * cosPhi + circleTbl[3][i] * sinPhi
+            val r = rt + ampA * wr
+            val x = c.x + r * circleTbl[0][i]
+            val y = c.y + r * circleTbl[1][i]
             if (i == 0) track.moveTo(x, y) else track.lineTo(x, y)
         }
         drawPath(track, Color(0x66FFFFFF), style = Stroke(strokeW, cap = StrokeCap.Round))
@@ -971,13 +1000,12 @@ private fun WavyDial(
         val frac = progress().coerceIn(0f, 1f)
         if (frac > 0.002f) {
             val arc = Path()
-            val sweep = frac * 2f * kotlin.math.PI.toFloat()
-            val m = (n * frac).toInt().coerceAtLeast(2)
+            val m = (sampleN * frac).toInt().coerceAtLeast(2)
             for (i in 0..m) {
-                val t = -kotlin.math.PI.toFloat() / 2f + sweep * i / m
-                val r = waveR(t)
-                val x = c.x + r * kotlin.math.cos(t)
-                val y = c.y + r * kotlin.math.sin(t)
+                val wr = arcTbl[2][i] * cosPhi + arcTbl[3][i] * sinPhi
+                val r = rt + ampA * wr
+                val x = c.x + r * arcTbl[0][i]
+                val y = c.y + r * arcTbl[1][i]
                 if (i == 0) arc.moveTo(x, y) else arc.lineTo(x, y)
             }
             drawPath(arc, accent, style = Stroke(strokeW, cap = StrokeCap.Round))

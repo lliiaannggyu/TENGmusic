@@ -128,12 +128,14 @@ fun SkinPlayerScreen(
     // 受 active 控制的手动循环：页面不可见时停止重绘，不再后台空转抢 CPU/音频。
     val waveSpeed = skin.widgets.firstOrNull { it.id == "progress" && it.ringStyle == "wave" }?.waveSpeed ?: 16000
     var phase by remember { mutableFloatStateOf(0f) }
-    LaunchedEffect(active) {
-        if (!active) return@LaunchedEffect
-        while (isActive) {
-            animate(0f, 1f, animationSpec = tween(waveSpeed, easing = LinearEasing)) { value, _ ->
+    LaunchedEffect(active, isPlaying) {
+        if (!active || !isPlaying) return@LaunchedEffect
+        while (isActive && isPlaying) {
+            val from: Float = phase
+            animate(from, from + 1f, animationSpec = tween(waveSpeed, easing = LinearEasing)) { value, _ ->
                 phase = value
             }
+            if (phase > 1024f) phase -= 1024f
         }
     }
 
@@ -377,6 +379,30 @@ private fun SkinWaveDial(
     isPlaying: Boolean,
 ) {
     val ampF by animateFloatAsState(targetValue = if (isPlaying) 1f else 0f, label = "skinAmp")
+    // 三角查表（低端设备优化）：和角公式把每帧三角函数从 ~2160 次降到 2 次。
+    // lobes 由皮肤配置，作为 remember key —— 正常不变，仅换皮肤时重建一次。
+    val sampleN = 120
+    val twoPi = 2f * PI.toFloat()
+    val halfPi = PI.toFloat() / 2f
+    // [0]=cos t [1]=sin t [2]=cos(lobes·t) [3]=sin(lobes·t)
+    val tbl = remember(lobes) {
+        Array(4) { FloatArray(sampleN + 1) }.also { t ->
+            for (i in 0..sampleN) {
+                val a = i * twoPi / sampleN
+                t[0][i] = cos(a); t[1][i] = sin(a)
+                t[2][i] = cos(lobes * a); t[3][i] = sin(lobes * a)
+            }
+        }
+    }
+    val arcTbl = remember(lobes) {
+        Array(4) { FloatArray(sampleN + 1) }.also { t ->
+            for (i in 0..sampleN) {
+                val a = -halfPi + i * twoPi / sampleN
+                t[0][i] = cos(a); t[1][i] = sin(a)
+                t[2][i] = cos(lobes * a); t[3][i] = sin(lobes * a)
+            }
+        }
+    }
     Canvas(modifier) {
         val c = center
         val R = size.minDimension / 2f
@@ -385,33 +411,34 @@ private fun SkinWaveDial(
         val sw = R * (strokeRatio.coerceIn(0.02f, 0.3f))
         val gp = R * gap
         val off = sw / 2f + gp
-        val phi = phase * 2f * PI.toFloat()
-        val n = 240
-        val step = 2f * PI.toFloat() / n
-        fun waveR(t: Float) = rt + a * cos(lobes * (t - phi))
+        val kphi = lobes * phase * twoPi
+        val cosPhi = cos(kphi); val sinPhi = sin(kphi)
 
         val discPath = Path()
-        for (i in 0..n) {
-            val t = i * step; val r = waveR(t) - off
-            val x = c.x + r * cos(t); val y = c.y + r * sin(t)
+        for (i in 0..sampleN) {
+            val wr = tbl[2][i] * cosPhi + tbl[3][i] * sinPhi
+            val r = rt + a * wr - off
+            val x = c.x + r * tbl[0][i]; val y = c.y + r * tbl[1][i]
             if (i == 0) discPath.moveTo(x, y) else discPath.lineTo(x, y)
         }
         discPath.close(); drawPath(discPath, disc, style = Fill)
 
         val trackPath = Path()
-        for (i in 0..n) {
-            val t = i * step; val r = waveR(t)
-            val x = c.x + r * cos(t); val y = c.y + r * sin(t)
+        for (i in 0..sampleN) {
+            val wr = tbl[2][i] * cosPhi + tbl[3][i] * sinPhi
+            val r = rt + a * wr
+            val x = c.x + r * tbl[0][i]; val y = c.y + r * tbl[1][i]
             if (i == 0) trackPath.moveTo(x, y) else trackPath.lineTo(x, y)
         }
         drawPath(trackPath, track, style = Stroke(sw, cap = StrokeCap.Round))
 
         val frac = progress.coerceIn(0f, 1f)
         if (frac > 0.002f) {
-            val arc = Path(); val sweep = frac * 2f * PI.toFloat(); val m = (n * frac).toInt().coerceAtLeast(2)
+            val arc = Path(); val m = (sampleN * frac).toInt().coerceAtLeast(2)
             for (i in 0..m) {
-                val t = -PI.toFloat() / 2f + sweep * i / m; val r = waveR(t)
-                val x = c.x + r * cos(t); val y = c.y + r * sin(t)
+                val wr = arcTbl[2][i] * cosPhi + arcTbl[3][i] * sinPhi
+                val r = rt + a * wr
+                val x = c.x + r * arcTbl[0][i]; val y = c.y + r * arcTbl[1][i]
                 if (i == 0) arc.moveTo(x, y) else arc.lineTo(x, y)
             }
             drawPath(arc, accent, style = Stroke(sw, cap = StrokeCap.Round))
