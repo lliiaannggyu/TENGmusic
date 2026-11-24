@@ -144,8 +144,6 @@ fun AlbumCoverFlow(
     // 动画进度用普通 State 承载：每帧写入会触发重组，保证渐显逐帧刷新
     // （Animatable.value 不是 State，直接读不会触发重组，之前动画"时有时无"就源于此）
     val animProgress = remember { mutableFloatStateOf(0f) }
-    // 展开完成后的回弹量（0→+3.5%→0）：所有卡片 scale 乘 (1+bounce)，作为展开收尾
-    val bounceScale = remember { mutableFloatStateOf(0f) }
     // 定位/回环跳转期间抑制「兜底归位」，否则会把刚定位好的列表又拽回去
     val suppressSnapUntil = remember { mutableStateOf(0L) }
 
@@ -157,11 +155,8 @@ fun AlbumCoverFlow(
     // 展开动画的距离锚点（v1.47 原版语义）：打开时定位到的 content 下标。
     // dist 按这个固定锚点算，不跟随滑动 —— 原版「从中间向两边展开」的层次感来源。
     val startContentIdx = remember { mutableIntStateOf(0) }
-    // 展开动画是否已真正开始：浮层从底部滑入约 300~400ms，此前若直接播展开动画，
-    // 中间两张（错峰最早）的 109ms 弹出窗口会被滑入过程完全盖住 —— 用户看到的就是
-    // 「中间的没动画，远处的有」。现在分两段：滑入期间中心专辑全尺寸可见（跟随页面
-    // 一起滑上来），滑入完成后才开始「中心先收后弹 + 两侧依次炸开」的展开动画。
-    val animStarted = remember { mutableStateOf(false) }
+    // v1.66 性能精简：删除两段式交叠（animStarted）与回弹脉冲（bounceScale），
+    // 只保留最初的线性展开动画 —— 低性能设备上附加动画只耗性能不添体验。
 
     var state: CoverFlowState? = null
     state = rememberCoverFlowState(
@@ -275,28 +270,16 @@ fun AlbumCoverFlow(
         suppressSnapUntil.value = System.currentTimeMillis() + 900
         // 瞬时定位到当前专辑：绝不用动画滚动（否则打开瞬间会看到一串封面飞过＝像加载）
         state?.snapInstant(curContent)
-        // 展开动画与浮层滑入交叠（v1.62）：浮层匀速滑入 300ms，滑到 3/5 处（180ms）
-        // 就开始展开 —— 两者交叠 120ms，衔接连贯无停顿；中心专辑始终全尺寸可见。
+        // v1.66 精简：只保留最初的线性展开动画，立即随浮层滑入同步进行，
+        // 无两段式交叠、无回弹脉冲 —— 附加动画在低性能设备上只耗性能不添体验。
         animActive.value = true
-        animStarted.value = false
         animProgress.value = 0f
-        bounceScale.value = 0f
-        delay(180)
-        animStarted.value = true
-        // 展开：线性 tween 逐张炸开（用户认可的"从中间向两边展开"）
+        // 线性 tween：从中间向两边依次渐显（v1.47 原版效果）
         animate(0f, 1f, animationSpec = tween(durationMillis = 600, easing = LinearEasing)) { value, _ ->
             animProgress.value = value
         }
         animProgress.value = 1f
         animActive.value = false
-        // 展开完成后的柔和单次回弹：bounceScale 从 0 匀速走到 1（360ms），
-        // 渲染端用余弦脉冲 (1−cos(2πt))/2 把它映射成"平滑涨起→圆弧顶点→平滑回落"，
-        // 弹一次即收。旧实现用 keyframes 线性三段、顶点硬折返、10dp 大位移，
-        // 观感就是抽搐式"抖尿"；这里全程 C1 连续、位移收到 6dp，柔和自然。
-        animate(0f, 1f, animationSpec = tween(durationMillis = 360, easing = LinearEasing)) { value, _ ->
-            bounceScale.value = value
-        }
-        bounceScale.value = 1f
     }
 
     // 进入专辑流即后台预解码全部封面进 LruCache：
@@ -410,13 +393,11 @@ fun AlbumCoverFlow(
                             .fillMaxSize()
                             .graphicsLayer {
                                 val active = animActive.value
-                                val started = animStarted.value
                                 val start = startContentIdx.value
                                 val isCenter = c == start
                                 val appear = when {
                                     !active -> 1f
                                     isCenter -> 1f
-                                    !started -> 0f
                                     else -> {
                                         val dist = abs(c - start).toFloat()
                                         (animProgress.value * 5.5f - dist).coerceIn(0f, 1f)
@@ -426,15 +407,6 @@ fun AlbumCoverFlow(
                                 alpha = appear
                                 scaleX = sc
                                 scaleY = sc
-                                // 左右回弹（v1.65）：展开完成后两侧卡片沿水平方向柔和弹一下。
-                                // 余弦脉冲 0→峰→0 全程平滑（顶点圆弧过渡无硬折点），
-                                // 弹一次即收；bounceScale=1 时 pulse=0，无残留位移。
-                                val bounce = bounceScale.value
-                                if (!isCenter && bounce < 1f) {
-                                    val pulse = (1f - kotlin.math.cos(bounce * 2f * kotlin.math.PI.toFloat())) / 2f
-                                    val dir = if (c < start) -1f else 1f
-                                    translationX = dir * pulse * 6.dp.toPx()
-                                }
                             }
                     ) {
                         albums.getOrNull(real)?.let { AlbumArtContent(album = it) }
