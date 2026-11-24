@@ -159,16 +159,7 @@ fun WearPlayerScreen(
         label = "playProgress",
     )
 
-    // ===== 切歌动画 =====
-    // 当前曲目变化时，progress 从 0→1：封面/标题做一次「由下往上滑入 + 淡入 + 轻微放大」。
-    // 用 currentTrackKey 作为 key，切歌/首次进入都会重放；同一首歌内播放进度变化不触发。
-    val currentTrackKey = current?.let { "${it.uri}|${it.title}" } ?: "none"
-    val switchAnim = remember { androidx.compose.animation.core.Animatable(1f) }
-    LaunchedEffect(currentTrackKey) {
-        switchAnim.snapTo(0f)
-        switchAnim.animateTo(1f, tween(durationMillis = 420, easing = LinearEasing))
-    }
-    val switchProgress by switchAnim.asState()
+    // v1.67：切歌动画已删除（性能优先），切歌直接切换封面/标题。
 
     val focusRequester = rememberRotaryFocusRequester(active)
 
@@ -218,23 +209,13 @@ fun WearPlayerScreen(
                 ) { _, dragAmount -> swipeAcc += dragAmount }
             },
     ) {
-        // 1) 背景层：封面铺满 + 模糊 + 渐变暗化
-        // 切歌动画：新封面从轻微放大 + 下移 + 半透明，随 switchProgress 归位，
-        // 让每次切歌有一次柔和的「滑入」过渡（切歌/首次进入才重放）。
+        // 1) 背景层：封面铺满 + 模糊 + 渐变暗化（v1.67 切歌动画已删除，直接切换）
         AsyncImage(
             model = current?.albumArtUri,
             contentDescription = null,
             modifier = Modifier
                 .fillMaxSize()
-                .then(blurModifier(blurRadius))
-                .graphicsLayer {
-                    val p = switchProgress.coerceIn(0f, 1f)
-                    alpha = 0.35f + 0.65f * p
-                    val sc = 1.06f - 0.06f * p
-                    scaleX = sc
-                    scaleY = sc
-                    translationY = (1f - p) * 14f
-                },
+                .then(blurModifier(blurRadius)),
             contentScale = ContentScale.Crop,
         )
         Box(
@@ -909,28 +890,12 @@ private fun WavyDial(
     active: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
-    // 波形旋转相位：受 active + isPlaying 双控 —— 页面不可见或暂停时彻底冻结，
-    // Canvas 停止重绘（暂停时波幅已收敛成正圆，转相位毫无视觉意义，纯浪费 CPU）。
-    var phase by remember { mutableFloatStateOf(0f) }
-    LaunchedEffect(active, isPlaying) {
-        if (!active || !isPlaying) return@LaunchedEffect
-        while (isActive && isPlaying) {
-            val from: Float = phase
-            animate(from, from + 1f, animationSpec = tween(16000, easing = LinearEasing)) { value, _ ->
-                phase = value
-            }
-            // 相位单调增长，超过 1024 整圈时归零（1024 圈=整数个 2π，cos/sin 完全不变），
-            // 避免长时间运行后浮点精度下降。
-            if (phase > 1024f) phase -= 1024f
-        }
-    }
-    // ===== 三角查表（低端设备性能优化，视觉完全不变）=====
-    // 原实现每帧 3 条 Path×240 点×3 次 sin/cos ≈ 2160 次三角函数，60fps = 每秒 13 万次，
-    // 低端 Wear 设备 CPU 扛不住 → 主线程掉帧 + 音频欠载（声音卡）。
-    // 现用和角公式：cos(k(t−φ)) = cos(kt)·cos(kφ) + sin(kt)·sin(kφ)。
-    // kt（采样点固定）与 kφ（每帧一次）分离：每帧只算 2 次三角函数，其余全是查表乘加。
+    // v1.67：装饰动画全部删除（性能优先）。波浪盘静止不自转，
+    // 只保留功能性变化：进度弧随播放进度、波幅随播放/暂停直接切换。
+    // ===== 三角查表 =====
+    // 波形静止后形状固定，查表让进度弧每次重绘也只需查表乘加、零三角函数。
     val lobes = 10
-    val sampleN = 120                       // 采样点 240→120（手表小屏肉眼无损）
+    val sampleN = 120                       // 采样点（手表小屏肉眼无损）
     val twoPi = 2f * kotlin.math.PI.toFloat()
     val halfPi = kotlin.math.PI.toFloat() / 2f
     // 表项：[0]=cos(t) [1]=sin(t) [2]=cos(lobes·t) [3]=sin(lobes·t)
@@ -953,12 +918,8 @@ private fun WavyDial(
             }
         }
     }
-    // v1.43：暂停时波幅收到 0 → 整体变回正圆（播放/暂停间平滑过渡）
-    val ampF by animateFloatAsState(
-        targetValue = if (isPlaying) 1f else 0f,
-        animationSpec = tween(durationMillis = 450),
-        label = "waveAmp",
-    )
+    // 波幅：播放=波浪、暂停=正圆，直接切换（不再做 450ms 平滑动画）
+    val ampF = if (isPlaying) 1f else 0f
     Canvas(modifier.size(dialSize)) {
         val c = center
         val R = size.minDimension / 2f
@@ -967,10 +928,10 @@ private fun WavyDial(
         val strokeW = R * 0.108f                // 轨道线宽
         val gap = R * 0.072f                    // 暗缝
         val offset = strokeW / 2f + gap         // 色块边缘 = 波浪线内移量
-        // 每帧仅 2 次三角函数：kφ 的正余弦，把旋转相位带入和角公式
-        val kphi = lobes * phase * twoPi
-        val cosPhi = kotlin.math.cos(kphi)
-        val sinPhi = kotlin.math.sin(kphi)
+        // 波浪静止（v1.67 删除自转）：相位固定为 0 → cos(0)=1 / sin(0)=0，
+        // wr = cos(lobes·θ)，纯查表，零三角函数调用
+        val cosPhi = 1f
+        val sinPhi = 0f
         val ampA = amp * ampF
 
         // —— ① 实心波浪色块：r = r(θ) − offset（逐点平行于轨道） ——

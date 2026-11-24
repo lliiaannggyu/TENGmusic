@@ -124,20 +124,8 @@ fun SkinPlayerScreen(
     val density = LocalDensity.current
     val themeColor = Color(android.graphics.Color.parseColor("#34C7F4"))
 
-    // 波浪盘自转周期由皮肤 progress 控件的 waveSpeed 决定。
-    // 受 active 控制的手动循环：页面不可见时停止重绘，不再后台空转抢 CPU/音频。
-    val waveSpeed = skin.widgets.firstOrNull { it.id == "progress" && it.ringStyle == "wave" }?.waveSpeed ?: 16000
-    var phase by remember { mutableFloatStateOf(0f) }
-    LaunchedEffect(active, isPlaying) {
-        if (!active || !isPlaying) return@LaunchedEffect
-        while (isActive && isPlaying) {
-            val from: Float = phase
-            animate(from, from + 1f, animationSpec = tween(waveSpeed, easing = LinearEasing)) { value, _ ->
-                phase = value
-            }
-            if (phase > 1024f) phase -= 1024f
-        }
-    }
+    // v1.67：波浪自转动画已删除（性能优先），波浪盘静止（phase 恒 0）。
+    val phase = 0f
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val S: Dp = minOf(maxWidth, maxHeight)
@@ -378,7 +366,8 @@ private fun SkinWaveDial(
     phase: Float,
     isPlaying: Boolean,
 ) {
-    val ampF by animateFloatAsState(targetValue = if (isPlaying) 1f else 0f, label = "skinAmp")
+    // 波幅直接切换（v1.67 删除平滑动画）
+    val ampF = if (isPlaying) 1f else 0f
     // 三角查表（低端设备优化）：和角公式把每帧三角函数从 ~2160 次降到 2 次。
     // lobes 由皮肤配置，作为 remember key —— 正常不变，仅换皮肤时重建一次。
     val sampleN = 120
