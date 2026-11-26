@@ -54,8 +54,8 @@ import com.tengwear.tengmusic.ThemeFile
 /**
  * 主题工坊（v1.48，v1.68 增强）：播放器 UI / 歌词 主题的导入、预览、切换、删除。
  *
- * - 主题是用户自己编写的 .json 文件，可通过内置文件管理器自由浏览目录导入，
- *   也可直接粘贴 JSON 文本导入（v1.68）。
+ * - 主题是用户自己编写的 .json 文件，可通过内置文件管理器自由浏览目录导入；
+ *   也可在「设置 → 主题文本导入」里粘贴 JSON 文本导入（v1.68）。
  * - 内置制作手册，可直接在手表查看、复制全文或导出到 Download 目录（v1.68）。
  * - 每个主题卡片带一块「缩略预览」，点按即应用；右侧 × 删除。
  * - 「恢复默认」清除当前分类的自定义主题。
@@ -72,7 +72,7 @@ fun ThemeManagerScreen(
     val accent = Color(accentInt)
 
     var tab by remember { mutableStateOf(0) } // 0 播放器 1 歌词
-    var mode by remember { mutableStateOf(0) } // 0 列表 1 粘贴导入 2 手册
+    var mode by remember { mutableStateOf(0) } // 0 列表 1 手册
     var showPicker by remember { mutableStateOf(false) }
     var toast by remember { mutableStateOf<String?>(null) }
 
@@ -100,19 +100,14 @@ fun ThemeManagerScreen(
                         .clickable(onClick = { if (mode != 0) mode = 0 else onClose() }),
                 )
                 Text(
-                    when (mode) { 1 -> "粘贴导入"; 2 -> "制作手册"; else -> "主题工坊" },
+                    when (mode) { 1 -> "制作手册"; else -> "主题工坊" },
                     fontSize = 13.sp, color = accent,
                 )
                 Spacer(Modifier.size(18.dp))
             }
 
             when (mode) {
-                1 -> PasteImportView(
-                    accent = accent,
-                    onToast = { toast = it },
-                    onImported = { vm.notifyThemesChanged(); mode = 0 },
-                )
-                2 -> ManualView(accent = accent, onToast = { toast = it })
+                1 -> ManualView(accent = accent, onToast = { toast = it })
                 else -> {
                     // 分类切换
                     Row(
@@ -174,27 +169,10 @@ fun ThemeManagerScreen(
                             }
                         }
 
-                        // 导入：直接粘贴 JSON（v1.68）
-                        item {
-                            Card(
-                                onClick = { mode = 1 },
-                                modifier = Modifier.fillMaxWidth(0.94f),
-                                shape = RoundedCornerShape(percent = 50),
-                                colors = CardDefaults.cardColors(
-                                    containerColor = Color(0xF20B0B0E), contentColor = accent,
-                                ),
-                            ) {
-                                Column(Modifier.fillMaxWidth().padding(10.dp)) {
-                                    Text("粘贴 JSON 导入", fontSize = 11.sp)
-                                    Text("直接粘贴主题文本内容", fontSize = 8.sp, color = Color.Gray)
-                                }
-                            }
-                        }
-
                         // 制作手册（v1.68）
                         item {
                             Card(
-                                onClick = { mode = 2 },
+                                onClick = { mode = 1 },
                                 modifier = Modifier.fillMaxWidth(0.94f),
                                 shape = RoundedCornerShape(percent = 50),
                                 colors = CardDefaults.cardColors(
@@ -286,69 +264,6 @@ fun ThemeManagerScreen(
                     toast = if (ok > 0) "已导入 $ok 个主题" else "未识别到有效主题文件"
                 },
             )
-        }
-    }
-}
-
-/** 直接粘贴 JSON 文本导入子页 */
-@Composable
-private fun PasteImportView(accent: Color, onToast: (String) -> Unit, onImported: () -> Unit) {
-    val ctx = LocalContext.current
-    var text by remember { mutableStateOf("") }
-    val listState = rememberScalingLazyListState()
-
-    ScalingLazyColumn(
-        state = listState,
-        modifier = Modifier.fillMaxSize(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        item {
-            Text("把主题 JSON 全文粘贴到下方，点「导入主题」。", fontSize = 10.sp,
-                color = Color(0x99FFFFFF), textAlign = TextAlign.Center)
-        }
-        item {
-            // 剪贴板一键填入
-            androidx.wear.compose.material3.CompactButton(onClick = {
-                val clip = runCatching {
-                    (ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
-                        .primaryClip?.getItemAt(0)?.text?.toString()
-                }.getOrNull()
-                if (clip.isNullOrBlank()) onToast("剪贴板为空") else { text = clip; onToast("已填入剪贴板内容") }
-            }) { Text("从剪贴板填入", fontSize = 10.sp) }
-        }
-        item {
-            Box(
-                Modifier.fillMaxWidth(0.94f).height(120.dp)
-                    .background(Color(0xF212141A), RoundedCornerShape(12.dp))
-                    .border(1.dp, accent.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
-                    .padding(8.dp),
-            ) {
-                androidx.compose.foundation.text.BasicTextField(
-                    value = text,
-                    onValueChange = { text = it },
-                    textStyle = TextStyle(color = Color.White, fontSize = 10.sp),
-                    modifier = Modifier.fillMaxSize(),
-                )
-                if (text.isEmpty()) {
-                    Text("在此粘贴 JSON…", fontSize = 9.sp, color = Color(0x66FFFFFF))
-                }
-            }
-        }
-        item {
-            androidx.wear.compose.material3.Button(
-                onClick = {
-                    val result = CustomThemeRepository.importText(ctx, text, "粘贴主题")
-                    if (result != null) {
-                        onToast("已导入：${result.name}")
-                        onImported()
-                    } else {
-                        onToast("不是有效的主题 JSON")
-                    }
-                },
-                colors = androidx.wear.compose.material3.ButtonDefaults.buttonColors(
-                    containerColor = accent, contentColor = Color(0xFF06343B),
-                ),
-            ) { Text("导入主题", fontSize = 11.sp) }
         }
     }
 }

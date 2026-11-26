@@ -76,6 +76,7 @@ import androidx.wear.compose.material3.Slider
 import androidx.wear.compose.material3.SliderDefaults
 import androidx.wear.compose.material3.Text
 import com.tengwear.tengmusic.BuildConfig
+import com.tengwear.tengmusic.CustomThemeRepository
 import com.tengwear.tengmusic.StoreAuth
 import com.tengwear.tengmusic.Updater
 import android.content.Context
@@ -189,6 +190,7 @@ fun AudioSettingsScreen(
     // 自定义音源列表（音源分组用；在 Composable 顶层收集，不能放 lazy 作用域里）
     val sources by vm.musicSources.collectAsState()
 
+    val ctx = LocalContext.current
     val listState = rememberScalingLazyListState()
     val listFr = rememberRotaryFocusRequester(active)
     // 微调模式：选中某频段后，表冠直接调增益（不再滚动列表）
@@ -196,6 +198,8 @@ fun AudioSettingsScreen(
     // 频段调节区是否展开（默认折叠，点标题展开预设 + 竖条调节）
     var eqExpanded by remember { mutableStateOf(false) }
     var showLicenses by remember { mutableStateOf(false) }
+    // 主题文本导入覆盖层（v1.68：从主题工坊移到设置页的独立输入区）
+    var showThemeTextInput by remember { mutableStateOf(false) }
     // 设置页各分组默认展开/折叠状态（常用分组默认展开，其余默认折叠，点标题展开）
     var secPlay by remember { mutableStateOf(true) }
     var secSound by remember { mutableStateOf(true) }
@@ -948,6 +952,22 @@ fun AudioSettingsScreen(
                         )
                     }
                 }
+                // 主题文本导入（v1.68）：设置页独立输入区，粘贴 JSON 直接导入
+                item {
+                    Card(
+                        onClick = { if (loggedIn) showThemeTextInput = true else onRequireLogin() },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(percent = 50),
+                        colors = accentCardColors(accent),
+                    ) {
+                        Text(if (loggedIn) "主题文本导入" else "主题文本导入 🔒", fontSize = 11.sp)
+                        Text(
+                            if (loggedIn) "粘贴主题 JSON 内容，直接导入为自定义主题"
+                            else "登录后可用 · 点按前往商店授权",
+                            fontSize = 9.sp,
+                        )
+                    }
+                }
                 item {
                     Card(
                         onClick = onOpenCoverTool,
@@ -1138,6 +1158,16 @@ fun AudioSettingsScreen(
                         modifier = Modifier.align(Alignment.Center)
                     )
                 }
+            }
+
+            // 主题文本导入覆盖层（v1.68）：设置页独立输入区
+            if (showThemeTextInput) {
+                ThemeTextInputOverlay(
+                    accent = accent,
+                    onToast = { android.widget.Toast.makeText(ctx, it, android.widget.Toast.LENGTH_SHORT).show() },
+                    onClose = { showThemeTextInput = false },
+                    onImported = { vm.notifyThemesChanged() },
+                )
             }
         }
     }
@@ -1584,4 +1614,101 @@ private fun isStoreInstalled(ctx: Context): Boolean = try {
     ctx.packageManager.getPackageInfo(StoreAuth.STORE_PKG, 0) != null
 } catch (_: PackageManager.NameNotFoundException) {
     false
+}
+
+/**
+ * 主题文本导入覆盖层（v1.68）：设置页里的独立输入区，粘贴主题 JSON 全文直接导入。
+ * 从主题工坊移出，避免在主题列表内嵌套输入页。
+ */
+@Composable
+private fun ThemeTextInputOverlay(
+    accent: Color,
+    onToast: (String) -> Unit,
+    onClose: () -> Unit,
+    onImported: () -> Unit,
+) {
+    val ctx = LocalContext.current
+    var text by remember { mutableStateOf("") }
+    val listState = rememberScalingLazyListState()
+    val listFr = rememberRotaryFocusRequester(true)
+    LaunchedEffect(Unit) {
+        try { listFr.requestFocus() } catch (_: Throwable) {}
+    }
+
+    Box(Modifier.fillMaxSize().background(Color(0xFF06070A))) {
+        Column(Modifier.fillMaxSize()) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    "✕", fontSize = 14.sp, color = Color.White, textAlign = TextAlign.Center,
+                    modifier = Modifier.size(24.dp).clip(CircleShape)
+                        .background(Color(0x22FFFFFF))
+                        .clickable(onClick = onClose),
+                )
+                Text("主题文本导入", fontSize = 13.sp, color = accent)
+                Spacer(Modifier.size(18.dp))
+            }
+            ScalingLazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize().weight(1f).rotaryScroll(listState, listFr),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                item {
+                    Text(
+                        "把主题 JSON 全文粘贴到下方，点「导入主题」。",
+                        fontSize = 10.sp, color = Color(0x99FFFFFF), textAlign = TextAlign.Center,
+                    )
+                }
+                item {
+                    CompactButton(onClick = {
+                        val clip = runCatching {
+                            (ctx.getSystemService(Context.CLIPBOARD_SERVICE)
+                                as android.content.ClipboardManager)
+                                .primaryClip?.getItemAt(0)?.text?.toString()
+                        }.getOrNull()
+                        if (clip.isNullOrBlank()) onToast("剪贴板为空")
+                        else { text = clip; onToast("已填入剪贴板内容") }
+                    }) { Text("从剪贴板填入", fontSize = 10.sp) }
+                }
+                item {
+                    Box(
+                        Modifier.fillMaxWidth(0.94f).height(120.dp)
+                            .background(Color(0xF212141A), RoundedCornerShape(12.dp))
+                            .border(1.dp, accent.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
+                            .padding(8.dp),
+                    ) {
+                        BasicTextField(
+                            value = text,
+                            onValueChange = { text = it },
+                            textStyle = TextStyle(color = Color.White, fontSize = 10.sp),
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                        if (text.isEmpty()) {
+                            Text("在此粘贴 JSON…", fontSize = 9.sp, color = Color(0x66FFFFFF))
+                        }
+                    }
+                }
+                item {
+                    androidx.wear.compose.material3.Button(
+                        onClick = {
+                            val result = CustomThemeRepository.importText(ctx, text, "粘贴主题")
+                            if (result != null) {
+                                onToast("已导入：${result.name}")
+                                onImported()
+                                onClose()
+                            } else {
+                                onToast("不是有效的主题 JSON")
+                            }
+                        },
+                        colors = androidx.wear.compose.material3.ButtonDefaults.buttonColors(
+                            containerColor = accent, contentColor = Color(0xFF06343B),
+                        ),
+                    ) { Text("导入主题", fontSize = 11.sp) }
+                }
+            }
+        }
+    }
 }
