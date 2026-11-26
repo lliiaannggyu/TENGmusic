@@ -76,7 +76,6 @@ import androidx.wear.compose.material3.Slider
 import androidx.wear.compose.material3.SliderDefaults
 import androidx.wear.compose.material3.Text
 import com.tengwear.tengmusic.BuildConfig
-import com.tengwear.tengmusic.CustomThemeRepository
 import com.tengwear.tengmusic.StoreAuth
 import com.tengwear.tengmusic.Updater
 import android.content.Context
@@ -190,7 +189,6 @@ fun AudioSettingsScreen(
     // 自定义音源列表（音源分组用；在 Composable 顶层收集，不能放 lazy 作用域里）
     val sources by vm.musicSources.collectAsState()
 
-    val ctx = LocalContext.current
     val listState = rememberScalingLazyListState()
     val listFr = rememberRotaryFocusRequester(active)
     // 微调模式：选中某频段后，表冠直接调增益（不再滚动列表）
@@ -198,8 +196,8 @@ fun AudioSettingsScreen(
     // 频段调节区是否展开（默认折叠，点标题展开预设 + 竖条调节）
     var eqExpanded by remember { mutableStateOf(false) }
     var showLicenses by remember { mutableStateOf(false) }
-    // 主题文本导入覆盖层（v1.68：从主题工坊移到设置页的独立输入区）
-    var showThemeTextInput by remember { mutableStateOf(false) }
+    // 输入授权码覆盖层（v1.69）：设置页手动粘贴商店签发的加密授权码完成登录
+    var showAuthCodeInput by remember { mutableStateOf(false) }
     // 设置页各分组默认展开/折叠状态（常用分组默认展开，其余默认折叠，点标题展开）
     var secPlay by remember { mutableStateOf(true) }
     var secSound by remember { mutableStateOf(true) }
@@ -952,22 +950,6 @@ fun AudioSettingsScreen(
                         )
                     }
                 }
-                // 主题文本导入（v1.68）：设置页独立输入区，粘贴 JSON 直接导入
-                item {
-                    Card(
-                        onClick = { if (loggedIn) showThemeTextInput = true else onRequireLogin() },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(percent = 50),
-                        colors = accentCardColors(accent),
-                    ) {
-                        Text(if (loggedIn) "主题文本导入" else "主题文本导入 🔒", fontSize = 11.sp)
-                        Text(
-                            if (loggedIn) "粘贴主题 JSON 内容，直接导入为自定义主题"
-                            else "登录后可用 · 点按前往商店授权",
-                            fontSize = 9.sp,
-                        )
-                    }
-                }
                 item {
                     Card(
                         onClick = onOpenCoverTool,
@@ -1117,6 +1099,19 @@ fun AudioSettingsScreen(
                     }
                 }
 
+                // 输入授权码（v1.69）：手动粘贴商店签发的加密授权码完成本地绑定
+                item {
+                    Card(
+                        onClick = { showAuthCodeInput = true },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(percent = 50),
+                        colors = accentCardColors(accent),
+                    ) {
+                        Text("输入授权码", fontSize = 11.sp)
+                        Text("粘贴商店签发的授权码，离线校验并登录", fontSize = 9.sp)
+                    }
+                }
+
                 // 版本号（用于确认当前安装的构建版本）
                 item {
                     Text(
@@ -1160,13 +1155,12 @@ fun AudioSettingsScreen(
                 }
             }
 
-            // 主题文本导入覆盖层（v1.68）：设置页独立输入区
-            if (showThemeTextInput) {
-                ThemeTextInputOverlay(
+            // 输入授权码覆盖层（v1.69）：手动粘贴商店签发的加密授权码
+            if (showAuthCodeInput) {
+                AuthCodeInputOverlay(
                     accent = accent,
-                    onToast = { android.widget.Toast.makeText(ctx, it, android.widget.Toast.LENGTH_SHORT).show() },
-                    onClose = { showThemeTextInput = false },
-                    onImported = { vm.notifyThemesChanged() },
+                    onClose = { showAuthCodeInput = false },
+                    onBound = { showAuthCodeInput = false },
                 )
             }
         }
@@ -1617,22 +1611,25 @@ private fun isStoreInstalled(ctx: Context): Boolean = try {
 }
 
 /**
- * 主题文本导入覆盖层（v1.68）：设置页里的独立输入区，粘贴主题 JSON 全文直接导入。
- * 从主题工坊移出，避免在主题列表内嵌套输入页。
+ * 输入授权码覆盖层（v1.69）：设置页里手动粘贴商店签发的加密授权码。
+ * 商店授权后会复制授权码到剪贴板，这里「从剪贴板填入」再「验证并绑定」，全程离线校验。
  */
 @Composable
-private fun ThemeTextInputOverlay(
+private fun AuthCodeInputOverlay(
     accent: Color,
-    onToast: (String) -> Unit,
     onClose: () -> Unit,
-    onImported: () -> Unit,
+    onBound: () -> Unit,
 ) {
     val ctx = LocalContext.current
-    var text by remember { mutableStateOf("") }
+    var code by remember { mutableStateOf("") }
+    var tip by remember { mutableStateOf<String?>(null) }
     val listState = rememberScalingLazyListState()
     val listFr = rememberRotaryFocusRequester(true)
     LaunchedEffect(Unit) {
         try { listFr.requestFocus() } catch (_: Throwable) {}
+    }
+    val toast: (String) -> Unit = {
+        android.widget.Toast.makeText(ctx, it, android.widget.Toast.LENGTH_SHORT).show()
     }
 
     Box(Modifier.fillMaxSize().background(Color(0xFF06070A))) {
@@ -1648,8 +1645,8 @@ private fun ThemeTextInputOverlay(
                         .background(Color(0x22FFFFFF))
                         .clickable(onClick = onClose),
                 )
-                Text("主题文本导入", fontSize = 13.sp, color = accent)
-                Spacer(Modifier.size(18.dp))
+                Text("输入授权码", fontSize = 13.sp, color = accent)
+                Spacer(Modifier.size(24.dp))
             }
             ScalingLazyColumn(
                 state = listState,
@@ -1658,8 +1655,8 @@ private fun ThemeTextInputOverlay(
             ) {
                 item {
                     Text(
-                        "把主题 JSON 全文粘贴到下方，点「导入主题」。",
-                        fontSize = 10.sp, color = Color(0x99FFFFFF), textAlign = TextAlign.Center,
+                        "在 TENC 商店完成授权后，授权码会复制到剪贴板。点下方按钮填入并验证。",
+                        fontSize = 9.sp, color = Color(0x99FFFFFF), textAlign = TextAlign.Center,
                     )
                 }
                 item {
@@ -1669,44 +1666,59 @@ private fun ThemeTextInputOverlay(
                                 as android.content.ClipboardManager)
                                 .primaryClip?.getItemAt(0)?.text?.toString()
                         }.getOrNull()
-                        if (clip.isNullOrBlank()) onToast("剪贴板为空")
-                        else { text = clip; onToast("已填入剪贴板内容") }
+                        if (clip.isNullOrBlank()) {
+                            tip = "剪贴板为空"; toast("剪贴板为空")
+                        } else {
+                            code = clip.trim(); tip = null; toast("已填入剪贴板内容")
+                        }
                     }) { Text("从剪贴板填入", fontSize = 10.sp) }
                 }
                 item {
                     Box(
-                        Modifier.fillMaxWidth(0.94f).height(120.dp)
+                        Modifier.fillMaxWidth(0.94f).height(110.dp)
                             .background(Color(0xF212141A), RoundedCornerShape(12.dp))
                             .border(1.dp, accent.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
                             .padding(8.dp),
                     ) {
                         BasicTextField(
-                            value = text,
-                            onValueChange = { text = it },
-                            textStyle = TextStyle(color = Color.White, fontSize = 10.sp),
+                            value = code,
+                            onValueChange = { code = it },
+                            textStyle = TextStyle(color = Color.White, fontSize = 9.sp),
                             modifier = Modifier.fillMaxSize(),
                         )
-                        if (text.isEmpty()) {
-                            Text("在此粘贴 JSON…", fontSize = 9.sp, color = Color(0x66FFFFFF))
+                        if (code.isEmpty()) {
+                            Text("在此粘贴授权码…", fontSize = 9.sp, color = Color(0x66FFFFFF))
                         }
+                    }
+                }
+                if (tip != null) {
+                    item {
+                        Text(tip!!, fontSize = 9.sp, color = Color(0xFFFF8A9A), textAlign = TextAlign.Center)
                     }
                 }
                 item {
                     androidx.wear.compose.material3.Button(
                         onClick = {
-                            val result = CustomThemeRepository.importText(ctx, text, "粘贴主题")
-                            if (result != null) {
-                                onToast("已导入：${result.name}")
-                                onImported()
-                                onClose()
+                            if (code.isBlank()) {
+                                tip = "请先填入授权码"; toast("请先填入授权码")
                             } else {
-                                onToast("不是有效的主题 JSON")
+                                val email = StoreAuth.verifyAndBind(ctx, code)
+                                if (email != null) {
+                                    toast("登录成功：$email")
+                                    onBound()
+                                } else {
+                                    tip = "授权码无效或已过期"; toast("授权码无效或已过期")
+                                }
                             }
                         },
                         colors = androidx.wear.compose.material3.ButtonDefaults.buttonColors(
                             containerColor = accent, contentColor = Color(0xFF06343B),
                         ),
-                    ) { Text("导入主题", fontSize = 11.sp) }
+                    ) { Text("验证并绑定", fontSize = 11.sp) }
+                }
+                item {
+                    Text("授权码仅在本机离线校验，不联网、不上传。", fontSize = 8.sp,
+                        color = Color.Gray, textAlign = TextAlign.Center)
                 }
             }
         }
