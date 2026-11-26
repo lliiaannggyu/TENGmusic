@@ -76,7 +76,10 @@ import androidx.wear.compose.material3.Slider
 import androidx.wear.compose.material3.SliderDefaults
 import androidx.wear.compose.material3.Text
 import com.tengwear.tengmusic.BuildConfig
+import com.tengwear.tengmusic.StoreAuth
 import com.tengwear.tengmusic.Updater
+import android.content.Context
+import android.content.pm.PackageManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -158,6 +161,8 @@ fun AudioSettingsScreen(
     onOpenListenTogether: () -> Unit = {},
     onOpenCustomAlbums: () -> Unit = {},
     onOpenThemeManager: () -> Unit = {},
+    loggedIn: Boolean = true,
+    onRequireLogin: () -> Unit = {},
     active: Boolean = true,
 ) {
     val eqEnabled by vm.eqEnabled.collectAsState()
@@ -263,8 +268,12 @@ fun AudioSettingsScreen(
                     }
                 }
 
-                // ========== 2. 音效（均衡器，默认展开）==========
-                collapsibleSection("音效", secSound, { secSound = !secSound }, accent) {
+                // ========== 2. 音效（均衡器，默认展开；登录后可用）==========
+                collapsibleSection(
+                    "音效", secSound,
+                    { if (loggedIn) secSound = !secSound else onRequireLogin() },
+                    accent, locked = !loggedIn,
+                ) {
                     // EQ 开关（M3E SwitchButton）
                     item {
                         SwitchButton(
@@ -926,13 +935,17 @@ fun AudioSettingsScreen(
                 }
                 item {
                     Card(
-                        onClick = onOpenThemeManager,
+                        onClick = { if (loggedIn) onOpenThemeManager() else onRequireLogin() },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(percent = 50),
                         colors = accentCardColors(accent),
                     ) {
-                        Text("主题工坊", fontSize = 11.sp)
-                        Text("自制播放器UI/歌词主题 · 导入·预览·切换·删除", fontSize = 9.sp)
+                        Text(if (loggedIn) "主题工坊" else "主题工坊 🔒", fontSize = 11.sp)
+                        Text(
+                            if (loggedIn) "自制播放器UI/歌词主题 · 导入·预览·切换·删除"
+                            else "登录后可用 · 点按前往商店授权",
+                            fontSize = 9.sp,
+                        )
                     }
                 }
                 item {
@@ -964,96 +977,41 @@ fun AudioSettingsScreen(
                     }
                 }
 
-                // 应用内更新（v1.44）：走 GitHub Releases API 检查新版本，一键下载 APK
+                // 应用更新（v1.68）：改为深链跳商店对应应用更新/下载页，由商店完成检查与下载
                 item {
-                    var checking by remember { mutableStateOf(false) }
-                    var update by remember { mutableStateOf<Updater.UpdateInfo?>(null) }
-                    var upToDate by remember { mutableStateOf(false) }
-                    var netErr by remember { mutableStateOf(false) }
-                    val scope = rememberCoroutineScope()
                     val ctx = LocalContext.current
                     Card(
                         onClick = {
-                            when {
-                                checking -> return@Card
-                                // 已发现新版本 → 再次点按 = 下载 APK（系统 DownloadManager，
-                                // 完成后通知栏可见，点开安装即可覆盖升级）
-                                update != null -> {
-                                    try {
-                                        val req = android.app.DownloadManager.Request(
-                                            android.net.Uri.parse(update!!.downloadUrl)
-                                        )
-                                            .setTitle("TENGMUSIC v${update!!.latestVersion}.apk")
-                                            .setDescription("下载完成后在通知栏点开安装")
-                                            .setNotificationVisibility(
-                                                android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED
-                                            )
-                                            .setDestinationInExternalPublicDir(
-                                                android.os.Environment.DIRECTORY_DOWNLOADS,
-                                                "TENGMUSIC-v${update!!.latestVersion}.apk"
-                                            )
-                                        (ctx.getSystemService(android.content.Context.DOWNLOAD_SERVICE)
-                                            as android.app.DownloadManager).enqueue(req)
-                                        android.widget.Toast.makeText(
-                                            ctx, "已开始下载，完成后在通知栏安装",
-                                            android.widget.Toast.LENGTH_SHORT
-                                        ).show()
-                                    } catch (_: Exception) {
-                                        // DownloadManager 失败 → 兜底用浏览器打开
-                                        try {
-                                            ctx.startActivity(
-                                                android.content.Intent(
-                                                    android.content.Intent.ACTION_VIEW,
-                                                    android.net.Uri.parse(update!!.downloadUrl)
-                                                ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                                            )
-                                        } catch (_: Exception) {
-                                        }
-                                    }
-                                }
-                                else -> {
-                                    checking = true; upToDate = false; netErr = false
-                                    scope.launch {
-                                        val info = withContext(Dispatchers.IO) { Updater.fetchLatest() }
-                                        checking = false
-                                        when {
-                                            info == null -> netErr = true
-                                            Updater.isNewer(
-                                                info.latestVersion,
-                                                BuildConfig.VERSION_NAME
-                                            ) -> update = info
-                                            else -> upToDate = true
-                                        }
-                                    }
-                                }
+                            StoreAuth.openUpdate(ctx)
+                            if (!isStoreInstalled(ctx)) {
+                                android.widget.Toast.makeText(ctx, "请先安装 TENC 商店", android.widget.Toast.LENGTH_SHORT).show()
                             }
                         },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(percent = 50),
                         colors = accentCardColors(accent),
                     ) {
-                        when {
-                            checking -> {
-                                Text("正在检查更新…", fontSize = 11.sp)
-                                Text("连接 GitHub Releases", fontSize = 9.sp)
+                        Text("检查更新", fontSize = 11.sp)
+                        Text("当前 v${BuildConfig.VERSION_NAME} · 前往商店更新", fontSize = 9.sp)
+                    }
+                }
+
+                // 反馈（v1.68）：深链跳商店里本应用的反馈页
+                item {
+                    val ctx = LocalContext.current
+                    Card(
+                        onClick = {
+                            StoreAuth.openFeedback(ctx)
+                            if (!isStoreInstalled(ctx)) {
+                                android.widget.Toast.makeText(ctx, "请先安装 TENC 商店", android.widget.Toast.LENGTH_SHORT).show()
                             }
-                            update != null -> {
-                                Text("发现新版本 v${update!!.latestVersion} ▼", fontSize = 11.sp)
-                                Text("点按下载 APK · 完成后通知栏安装", fontSize = 9.sp, color = accent)
-                            }
-                            upToDate -> {
-                                Text("已是最新版本 v${BuildConfig.VERSION_NAME}", fontSize = 11.sp)
-                                Text("点按重新检查", fontSize = 9.sp)
-                            }
-                            netErr -> {
-                                Text("检查失败（网络不可用）", fontSize = 11.sp)
-                                Text("当前 v${BuildConfig.VERSION_NAME} · 点按重试", fontSize = 9.sp)
-                            }
-                            else -> {
-                                Text("检查更新", fontSize = 11.sp)
-                                Text("当前 v${BuildConfig.VERSION_NAME}", fontSize = 9.sp)
-                            }
-                        }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(percent = 50),
+                        colors = accentCardColors(accent),
+                    ) {
+                        Text("反馈 / 建议", fontSize = 11.sp)
+                        Text("通过 TENC 商店发送反馈给开发者", fontSize = 9.sp)
                     }
                 }
 
@@ -1108,6 +1066,34 @@ fun AudioSettingsScreen(
                             Text(p.license, fontSize = 8.sp, color = accent)
                             Text(p.url, fontSize = 7.sp, color = Color.Gray, maxLines = 1)
                         }
+                    }
+                }
+
+                // 账号与授权（v1.68）：显示商店授权登录状态，可登录 / 登出
+                item {
+                    val ctx = LocalContext.current
+                    val email by remember { mutableStateOf(com.tengwear.tengmusic.StoreAuth.boundEmail(ctx)) }
+                    Card(
+                        onClick = {
+                            if (loggedIn) {
+                                com.tengwear.tengmusic.StoreAuth.logout(ctx)
+                                android.widget.Toast.makeText(ctx, "已登出，部分功能将锁定", android.widget.Toast.LENGTH_SHORT).show()
+                            } else {
+                                com.tengwear.tengmusic.StoreAuth.openAuth(ctx)
+                                if (!isStoreInstalled(ctx)) {
+                                    android.widget.Toast.makeText(ctx, "请先安装 TENC 商店", android.widget.Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(percent = 50),
+                        colors = accentCardColors(accent),
+                    ) {
+                        Text(if (loggedIn) "账号：已登录" else "账号：未登录 🔒", fontSize = 11.sp)
+                        Text(
+                            if (loggedIn) (email ?: "已绑定商店授权") else "点按前往商店授权登录",
+                            fontSize = 9.sp,
+                        )
                     }
                 }
 
@@ -1169,6 +1155,7 @@ private fun ScalingLazyListScope.collapsibleSection(
     expanded: Boolean,
     onToggle: () -> Unit,
     accent: Color,
+    locked: Boolean = false,
     content: ScalingLazyListScope.() -> Unit,
 ) {
     item {
@@ -1194,21 +1181,36 @@ private fun ScalingLazyListScope.collapsibleSection(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    title,
+                    if (locked) "$title 🔒" else title,
                     fontSize = 12.sp,
-                    color = accent,
+                    color = if (locked) Color(0x99FFFFFF) else accent,
                     modifier = Modifier.weight(1f),
                 )
-                Text(
-                    "▼",
-                    fontSize = 11.sp,
-                    color = accent,
-                    modifier = Modifier.graphicsLayer { rotationZ = arrowAngle },
-                )
+                if (!locked) {
+                    Text(
+                        "▼",
+                        fontSize = 11.sp,
+                        color = accent,
+                        modifier = Modifier.graphicsLayer { rotationZ = arrowAngle },
+                    )
+                }
             }
         }
     }
-    if (expanded) {
+    // 锁定分组：内容区替换为解锁提示，不展开真实功能
+    if (locked) {
+        item {
+            Card(
+                onClick = onToggle,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(percent = 50),
+                colors = accentCardColors(accent),
+            ) {
+                Text("登录后可用", fontSize = 11.sp, color = Color(0x99FFFFFF))
+                Text("点按前往商店授权登录", fontSize = 9.sp, color = Color.Gray)
+            }
+        }
+    } else if (expanded) {
         content()
     }
 }
@@ -1575,3 +1577,11 @@ private fun EqCurve(
 
 private fun formatFreq(hz: Int): String =
     if (hz >= 1000) "${hz / 1000}k" else "$hz"
+
+/** 是否已安装 TENC 商店（用于更新/反馈/登录跳商店前提示） */
+private fun isStoreInstalled(ctx: Context): Boolean = try {
+    @Suppress("DEPRECATION")
+    ctx.packageManager.getPackageInfo(StoreAuth.STORE_PKG, 0) != null
+} catch (_: PackageManager.NameNotFoundException) {
+    false
+}

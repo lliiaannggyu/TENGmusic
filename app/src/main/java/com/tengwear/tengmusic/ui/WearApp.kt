@@ -30,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -39,6 +40,7 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import com.tengwear.tengmusic.Album
 import com.tengwear.tengmusic.PlayerViewModel
+import com.tengwear.tengmusic.StoreAuth
 import com.tengwear.tengmusic.lan.LanManager
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -75,6 +77,14 @@ fun WearMusicApp(vm: PlayerViewModel) {
 
                 val currentPage = pager.currentPage
                 val scope = rememberCoroutineScope()
+
+                // 商店授权登录状态（本地绑定，离线可用）；未登录的功能入口统一引导登录
+                val loggedIn by StoreAuth.loggedIn.collectAsState()
+                val appCtx = LocalContext.current
+                val onRequireLogin: () -> Unit = {
+                    StoreAuth.openAuth(appCtx)
+                    android.widget.Toast.makeText(appCtx, "请先通过 TENC 商店授权登录", android.widget.Toast.LENGTH_SHORT).show()
+                }
 
                 // ===== 点歌飞行动画：歌名从列表位置线性飞到播放器标题位置 =====
                 var flyTitle by remember { mutableStateOf<String?>(null) }
@@ -163,8 +173,8 @@ fun WearMusicApp(vm: PlayerViewModel) {
                                 vm = vm,
                                 onOpenTrackList = { showTrackList = true },
                                 onOpenAlbumFlow = { showAlbumFlow = true },
-                                // 下滑打开「搜索与统计」页（手势统一在播放页内部识别，避免嵌套冲突）
-                                onOpenStats = { showStats = true },
+                                // 下滑打开「搜索与统计」页（听歌时长/排行榜需登录）
+                                onOpenStats = { if (loggedIn) showStats = true else onRequireLogin() },
                                 active = currentPage == 0 && !showAlbumFlow && openAlbum == null && !showStats,
                             )
                         }
@@ -185,6 +195,8 @@ fun WearMusicApp(vm: PlayerViewModel) {
                             onOpenListenTogether = { showListenTogether = true },
                             onOpenCustomAlbums = { showCustomAlbumMgr = true },
                             onOpenThemeManager = { showThemeManager = true },
+                            loggedIn = loggedIn,
+                            onRequireLogin = onRequireLogin,
                             active = currentPage == 3 && !showAlbumFlow && !showCoverTool && !showCustomAlbumMgr && !showThemeManager,
                         )
                     }

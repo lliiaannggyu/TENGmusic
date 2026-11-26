@@ -1,5 +1,10 @@
 package com.tengwear.tengmusic.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.os.Environment
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -29,6 +34,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -45,9 +52,11 @@ import com.tengwear.tengmusic.PlayerViewModel
 import com.tengwear.tengmusic.ThemeFile
 
 /**
- * 主题工坊（v1.48）：播放器 UI / 歌词 主题的导入、预览、切换、删除。
+ * 主题工坊（v1.48，v1.68 增强）：播放器 UI / 歌词 主题的导入、预览、切换、删除。
  *
- * - 主题是用户自己编写的 .json 文件，通过内置文件管理器自由浏览目录导入。
+ * - 主题是用户自己编写的 .json 文件，可通过内置文件管理器自由浏览目录导入，
+ *   也可直接粘贴 JSON 文本导入（v1.68）。
+ * - 内置制作手册，可直接在手表查看、复制全文或导出到 Download 目录（v1.68）。
  * - 每个主题卡片带一块「缩略预览」，点按即应用；右侧 × 删除。
  * - 「恢复默认」清除当前分类的自定义主题。
  */
@@ -57,16 +66,18 @@ fun ThemeManagerScreen(
     onClose: () -> Unit,
     active: Boolean = true,
 ) {
+    val ctx = LocalContext.current
     val themeVersion by vm.themeVersion.collectAsState()
     val accentInt by com.tengwear.tengmusic.AppTheme.accent.collectAsState()
     val accent = Color(accentInt)
 
     var tab by remember { mutableStateOf(0) } // 0 播放器 1 歌词
+    var mode by remember { mutableStateOf(0) } // 0 列表 1 粘贴导入 2 手册
     var showPicker by remember { mutableStateOf(false) }
     var toast by remember { mutableStateOf<String?>(null) }
 
     val listState = rememberScalingLazyListState()
-    val focusRequester = rememberRotaryFocusRequester(active)
+    val focusRequester = rememberRotaryFocusRequester(active && mode == 0)
 
     // themeVersion 参与读取，导入/删除后自动刷新
     val kind = if (tab == 0) "player" else "lyrics"
@@ -86,120 +97,176 @@ fun ThemeManagerScreen(
                 Icon(
                     Icons.Filled.Close, contentDescription = "关闭",
                     tint = Color.White, modifier = Modifier.size(18.dp).clip(CircleShape)
-                        .clickable(onClick = onClose),
+                        .clickable(onClick = { if (mode != 0) mode = 0 else onClose() }),
                 )
-                Text("主题工坊", fontSize = 13.sp, color = accent)
+                Text(
+                    when (mode) { 1 -> "粘贴导入"; 2 -> "制作手册"; else -> "主题工坊" },
+                    fontSize = 13.sp, color = accent,
+                )
                 Spacer(Modifier.size(18.dp))
             }
 
-            // 分类切换
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 10.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                CompactButton(
-                    onClick = { tab = 0 },
-                    colors = androidx.wear.compose.material3.ButtonDefaults.buttonColors(
-                        containerColor = if (tab == 0) accent else Color(0xFF2A2D36),
-                        contentColor = if (tab == 0) Color(0xFF06343B) else Color.White,
-                    ),
-                ) { Text("播放器UI", fontSize = 10.sp) }
-                CompactButton(
-                    onClick = { tab = 1 },
-                    colors = androidx.wear.compose.material3.ButtonDefaults.buttonColors(
-                        containerColor = if (tab == 1) accent else Color(0xFF2A2D36),
-                        contentColor = if (tab == 1) Color(0xFF06343B) else Color.White,
-                    ),
-                ) { Text("歌词", fontSize = 10.sp) }
-            }
-
-            if (toast != null) {
-                Text(
-                    toast!!, fontSize = 9.sp, color = accent, textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+            when (mode) {
+                1 -> PasteImportView(
+                    accent = accent,
+                    onToast = { toast = it },
+                    onImported = { vm.notifyThemesChanged(); mode = 0 },
                 )
-            }
-
-            ScalingLazyColumn(
-                state = listState,
-                modifier = Modifier.fillMaxSize().weight(1f)
-                    .rotaryScroll(listState, focusRequester),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                item { Text("${if (tab == 0) "播放器" else "歌词"}主题", fontSize = 10.sp, color = Color.Gray) }
-
-                // 导入
-                item {
-                    Card(
-                        onClick = { showPicker = true },
-                        modifier = Modifier.fillMaxWidth(0.94f),
-                        shape = RoundedCornerShape(percent = 50),
-                        colors = CardDefaults.cardColors(
-                            containerColor = Color(0xF20B0B0E), contentColor = accent,
-                        ),
+                2 -> ManualView(accent = accent, onToast = { toast = it })
+                else -> {
+                    // 分类切换
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth().padding(10.dp),
-                        ) {
-                            Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Column {
-                                Text("导入主题文件", fontSize = 11.sp)
-                                Text("从文件管理器选 .json（可多选）", fontSize = 8.sp, color = Color.Gray)
+                        CompactButton(
+                            onClick = { tab = 0 },
+                            colors = androidx.wear.compose.material3.ButtonDefaults.buttonColors(
+                                containerColor = if (tab == 0) accent else Color(0xFF2A2D36),
+                                contentColor = if (tab == 0) Color(0xFF06343B) else Color.White,
+                            ),
+                        ) { Text("播放器UI", fontSize = 10.sp) }
+                        CompactButton(
+                            onClick = { tab = 1 },
+                            colors = androidx.wear.compose.material3.ButtonDefaults.buttonColors(
+                                containerColor = if (tab == 1) accent else Color(0xFF2A2D36),
+                                contentColor = if (tab == 1) Color(0xFF06343B) else Color.White,
+                            ),
+                        ) { Text("歌词", fontSize = 10.sp) }
+                    }
+
+                    if (toast != null) {
+                        Text(
+                            toast!!, fontSize = 9.sp, color = accent, textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        )
+                    }
+
+                    ScalingLazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxSize().weight(1f)
+                            .rotaryScroll(listState, focusRequester),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        item { Text("${if (tab == 0) "播放器" else "歌词"}主题", fontSize = 10.sp, color = Color.Gray) }
+
+                        // 导入：文件管理器
+                        item {
+                            Card(
+                                onClick = { showPicker = true },
+                                modifier = Modifier.fillMaxWidth(0.94f),
+                                shape = RoundedCornerShape(percent = 50),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = Color(0xF20B0B0E), contentColor = accent,
+                                ),
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.fillMaxWidth().padding(10.dp),
+                                ) {
+                                    Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(8.dp))
+                                    Column {
+                                        Text("导入主题文件", fontSize = 11.sp)
+                                        Text("从文件管理器选 .json（可多选）", fontSize = 8.sp, color = Color.Gray)
+                                    }
+                                }
                             }
                         }
+
+                        // 导入：直接粘贴 JSON（v1.68）
+                        item {
+                            Card(
+                                onClick = { mode = 1 },
+                                modifier = Modifier.fillMaxWidth(0.94f),
+                                shape = RoundedCornerShape(percent = 50),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = Color(0xF20B0B0E), contentColor = accent,
+                                ),
+                            ) {
+                                Column(Modifier.fillMaxWidth().padding(10.dp)) {
+                                    Text("粘贴 JSON 导入", fontSize = 11.sp)
+                                    Text("直接粘贴主题文本内容", fontSize = 8.sp, color = Color.Gray)
+                                }
+                            }
+                        }
+
+                        // 制作手册（v1.68）
+                        item {
+                            Card(
+                                onClick = { mode = 2 },
+                                modifier = Modifier.fillMaxWidth(0.94f),
+                                shape = RoundedCornerShape(percent = 50),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = Color(0x22FFFFFF), contentColor = Color.White,
+                                ),
+                            ) {
+                                Column(Modifier.fillMaxWidth().padding(10.dp)) {
+                                    Text("制作手册", fontSize = 11.sp)
+                                    Text("查看 / 复制 / 导出 .json 编写教程", fontSize = 8.sp, color = Color.Gray)
+                                }
+                            }
+                        }
+
+                        if (themes.isEmpty()) {
+                            item {
+                                Text(
+                                    "还没有主题\n点上方导入，或按手册制作 .json 文件",
+                                    fontSize = 9.sp, color = Color.Gray, textAlign = TextAlign.Center,
+                                    modifier = Modifier.fillMaxWidth().padding(10.dp),
+                                )
+                            }
+                        }
+
+                        items(themes) { theme ->
+                            ThemeCard(
+                                theme = theme,
+                                isActive = theme.fileName == activeName,
+                                accent = accent,
+                                onApply = {
+                                    vm.applyTheme(theme)
+                                    toast = "已应用：${theme.name}"
+                                    vm.notifyThemesChanged()
+                                },
+                                onDelete = {
+                                    CustomThemeRepository.delete(vm.getApplication(), theme.fileName)
+                                    vm.notifyThemesChanged()
+                                    toast = "已删除：${theme.name}"
+                                },
+                            )
+                        }
+
+                        item {
+                            Card(
+                                onClick = {
+                                    vm.clearTheme(kind)
+                                    toast = "已恢复默认"
+                                },
+                                modifier = Modifier.fillMaxWidth(0.94f),
+                                shape = RoundedCornerShape(percent = 50),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = Color(0x22FFFFFF), contentColor = Color.White,
+                                ),
+                            ) {
+                                Text(
+                                    "恢复默认主题", fontSize = 11.sp, textAlign = TextAlign.Center,
+                                    modifier = Modifier.fillMaxWidth().padding(8.dp),
+                                )
+                            }
+                        }
+                        item { Spacer(Modifier.height(10.dp)) }
                     }
                 }
-
-                if (themes.isEmpty()) {
-                    item {
-                        Text(
-                            "还没有主题\n点上方导入，或按手册制作 .json 文件",
-                            fontSize = 9.sp, color = Color.Gray, textAlign = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth().padding(10.dp),
-                        )
-                    }
-                }
-
-                items(themes) { theme ->
-                    ThemeCard(
-                        theme = theme,
-                        isActive = theme.fileName == activeName,
-                        accent = accent,
-                        onApply = {
-                            vm.applyTheme(theme)
-                            toast = "已应用：${theme.name}"
-                            vm.notifyThemesChanged()
-                        },
-                        onDelete = {
-                            CustomThemeRepository.delete(vm.getApplication(), theme.fileName)
-                            vm.notifyThemesChanged()
-                            toast = "已删除：${theme.name}"
-                        },
-                    )
-                }
-
-                item {
-                    Card(
-                        onClick = {
-                            vm.clearTheme(kind)
-                            toast = "已恢复默认"
-                        },
-                        modifier = Modifier.fillMaxWidth(0.94f),
-                        shape = RoundedCornerShape(percent = 50),
-                        colors = CardDefaults.cardColors(
-                            containerColor = Color(0x22FFFFFF), contentColor = Color.White,
-                        ),
-                    ) {
-                        Text(
-                            "恢复默认主题", fontSize = 11.sp, textAlign = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth().padding(8.dp),
-                        )
-                    }
-                }
-                item { Spacer(Modifier.height(10.dp)) }
             }
+        }
+
+        // toast 显示在最上层（粘贴/手册子页也需要）
+        if (mode != 0 && toast != null) {
+            Text(
+                toast!!, fontSize = 9.sp, color = accent, textAlign = TextAlign.Center,
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 6.dp)
+                    .background(Color(0xCC06070A), RoundedCornerShape(8.dp)).padding(8.dp),
+            )
         }
 
         // 文件管理器：选 .json 主题文件，自由浏览目录
@@ -219,6 +286,119 @@ fun ThemeManagerScreen(
                     toast = if (ok > 0) "已导入 $ok 个主题" else "未识别到有效主题文件"
                 },
             )
+        }
+    }
+}
+
+/** 直接粘贴 JSON 文本导入子页 */
+@Composable
+private fun PasteImportView(accent: Color, onToast: (String) -> Unit, onImported: () -> Unit) {
+    val ctx = LocalContext.current
+    var text by remember { mutableStateOf("") }
+    val listState = rememberScalingLazyListState()
+
+    ScalingLazyColumn(
+        state = listState,
+        modifier = Modifier.fillMaxSize(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        item {
+            Text("把主题 JSON 全文粘贴到下方，点「导入主题」。", fontSize = 10.sp,
+                color = Color(0x99FFFFFF), textAlign = TextAlign.Center)
+        }
+        item {
+            // 剪贴板一键填入
+            androidx.wear.compose.material3.CompactButton(onClick = {
+                val clip = runCatching {
+                    (ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
+                        .primaryClip?.getItemAt(0)?.text?.toString()
+                }.getOrNull()
+                if (clip.isNullOrBlank()) onToast("剪贴板为空") else { text = clip; onToast("已填入剪贴板内容") }
+            }) { Text("从剪贴板填入", fontSize = 10.sp) }
+        }
+        item {
+            Box(
+                Modifier.fillMaxWidth(0.94f).height(120.dp)
+                    .background(Color(0xF212141A), RoundedCornerShape(12.dp))
+                    .border(1.dp, accent.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
+                    .padding(8.dp),
+            ) {
+                androidx.compose.foundation.text.BasicTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    textStyle = TextStyle(color = Color.White, fontSize = 10.sp),
+                    modifier = Modifier.fillMaxSize(),
+                )
+                if (text.isEmpty()) {
+                    Text("在此粘贴 JSON…", fontSize = 9.sp, color = Color(0x66FFFFFF))
+                }
+            }
+        }
+        item {
+            androidx.wear.compose.material3.Button(
+                onClick = {
+                    val result = CustomThemeRepository.importText(ctx, text, "粘贴主题")
+                    if (result != null) {
+                        onToast("已导入：${result.name}")
+                        onImported()
+                    } else {
+                        onToast("不是有效的主题 JSON")
+                    }
+                },
+                colors = androidx.wear.compose.material3.ButtonDefaults.buttonColors(
+                    containerColor = accent, contentColor = Color(0xFF06343B),
+                ),
+            ) { Text("导入主题", fontSize = 11.sp) }
+        }
+    }
+}
+
+/** 内置制作手册子页：滚动查看 + 复制全文 + 导出到 Download */
+@Composable
+private fun ManualView(accent: Color, onToast: (String) -> Unit) {
+    val ctx = LocalContext.current
+    val manual = remember { CustomThemeRepository.readManual(ctx) }
+    val listState = rememberScalingLazyListState()
+
+    Column(Modifier.fillMaxSize()) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            androidx.wear.compose.material3.CompactButton(onClick = {
+                runCatching {
+                    val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    cm.setPrimaryClip(ClipData.newPlainText("TENGMUSIC 主题手册", manual))
+                    onToast("手册已复制到剪贴板")
+                }.onFailure { onToast("复制失败") }
+            }) { Text("复制全文", fontSize = 9.sp) }
+            androidx.wear.compose.material3.CompactButton(onClick = {
+                val ok = runCatching {
+                    val dir = java.io.File(
+                        Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+                        "TENGMUSIC-主题制作手册.md",
+                    )
+                    dir.writeText(manual)
+                    true
+                }.getOrDefault(false)
+                onToast(if (ok) "已导出到 Download" else "导出失败")
+            }) { Text("导出文件", fontSize = 9.sp) }
+        }
+        ScalingLazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize().weight(1f),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            item { Text("声明式皮肤制作手册 v2", fontSize = 11.sp, color = accent, textAlign = TextAlign.Center) }
+            // 按行显示手册（每段一行，保持可读）
+            manual.lineSequence().filter { it.isNotBlank() }.forEach { line ->
+                item {
+                    Text(
+                        line, fontSize = 8.sp, color = Color(0xCCFFFFFF),
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp),
+                    )
+                }
+            }
         }
     }
 }

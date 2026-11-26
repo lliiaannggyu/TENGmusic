@@ -1,8 +1,11 @@
 package com.tengwear.tengmusic
 
 import android.Manifest
+import android.content.ClipboardManager
+import android.content.Context
 import android.os.Build
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -12,6 +15,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.tengwear.tengmusic.lan.LanManager
 import com.tengwear.tengmusic.ui.AgreementScreen
+import com.tengwear.tengmusic.ui.LoginGateScreen
 import com.tengwear.tengmusic.ui.WearMusicApp
 
 class MainActivity : ComponentActivity() {
@@ -22,30 +26,71 @@ class MainActivity : ComponentActivity() {
 
     // 使用协议同意状态（持久化，同意后不再弹出）
     private var eulaAgreed by mutableStateOf(false)
+    // 是否已越过登录引导（持久化：登录或跳过都记为完成，仅一次）
+    private var loginDone by mutableStateOf(false)
+
+    /** 启动阶段：0 协议 1 登录引导 2 主界面 */
+    private var stage by mutableStateOf(0)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        eulaAgreed = getSharedPreferences("user_prefs", MODE_PRIVATE)
-            .getBoolean("eula_agreed", false)
+        val prefs = getSharedPreferences("user_prefs", MODE_PRIVATE)
+        eulaAgreed = prefs.getBoolean("eula_agreed", false)
+        loginDone = prefs.getBoolean("login_done", false)
+        StoreAuth.init(applicationContext)
 
-        if (eulaAgreed) {
-            startAppServices()
+        stage = when {
+            !eulaAgreed -> 0
+            !loginDone -> 1
+            else -> 2
         }
+        if (stage == 2) startAppServices()
 
-        // 纯手表应用：直接加载 Wear OS UI（未同意协议时先显示协议页）
         setContent {
-            if (!eulaAgreed) {
-                AgreementScreen(
+            when (stage) {
+                0 -> AgreementScreen(
                     onAgree = {
-                        getSharedPreferences("user_prefs", MODE_PRIVATE)
-                            .edit().putBoolean("eula_agreed", true).apply()
+                        prefs.edit().putBoolean("eula_agreed", true).apply()
                         eulaAgreed = true
-                        startAppServices()
+                        stage = 1
                     },
                     onDecline = { finishAffinity() },
                 )
-            } else {
-                WearMusicApp(viewModel())
+                1 -> LoginGateScreen(
+                    onDone = {
+                        prefs.edit().putBoolean("login_done", true).apply()
+                        loginDone = true
+                        stage = 2
+                        startAppServices()
+                    },
+                )
+                else -> WearMusicApp(viewModel())
+            }
+        }
+    }
+
+    /**
+     * 从商店返回时（窗口重新获焦）自动尝试读取剪贴板授权码完成绑定：
+     * 无论是登录引导页还是主界面内点「需登录」跳转商店，返回后都能一次性绑定。
+     * 检测到有效授权码即绑定并提示；无效则静默（交由用户手动点按）。
+     */
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (!hasFocus || stage == 0 || !eulaAgreed) return
+        if (StoreAuth.isLoggedIn(this)) return
+        runCatching {
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            val code = cm.primaryClip?.getItemAt(0)?.text?.toString() ?: return
+            val email = StoreAuth.verifyAndBind(this, code)
+            if (email != null) {
+                getSharedPreferences("user_prefs", MODE_PRIVATE)
+                    .edit().putBoolean("login_done", true).apply()
+                loginDone = true
+                if (stage == 1) {
+                    stage = 2
+                    startAppServices()
+                }
+                Toast.makeText(this, "登录成功：$email", Toast.LENGTH_SHORT).show()
             }
         }
     }

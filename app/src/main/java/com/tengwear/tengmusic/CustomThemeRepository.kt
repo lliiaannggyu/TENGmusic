@@ -35,11 +35,37 @@ object CustomThemeRepository {
         } catch (_: Exception) {
             return null
         }
-        val parsed = ThemeFile.parse(source.name, raw) ?: return null
+        return importText(context, raw, source.name)
+    }
+
+    /**
+     * 从直接粘贴的 JSON 文本导入主题（主题工坊「粘贴导入」用）。
+     * [suggestedName] 为默认文件名（不含扩展名时自动补 .json）。返回导入结果，失败返回 null。
+     */
+    fun importText(context: Context, raw: String, suggestedName: String = "粘贴主题"): ThemeFile? {
+        val parsed = ThemeFile.parse(suggestedName, raw.trim()) ?: return null
         if (parsed.kind == "unknown") return null
-        val dest = File(themesDir(context), source.name)
-        dest.writeText(raw)
-        return parsed.copy(fileName = dest.name)
+        // 主题名优先取 JSON 内的 name，清洗成安全文件名
+        val base = parsed.name
+            .replace(Regex("[\\\\/:*?\"<>|\\r\\n]"), "_")
+            .trim().takeIf { it.isNotEmpty() } ?: suggestedName
+        var fileName = if (base.endsWith(".json", true)) base else "$base.json"
+        // 若同名已存在，加序号避免覆盖
+        var n = 2
+        while (File(themesDir(context), fileName).exists()) {
+            val stem = base.removeSuffix(".json")
+            fileName = "${stem}_$n.json"
+            n++
+        }
+        File(themesDir(context), fileName).writeText(raw.trim())
+        return parsed.copy(fileName = fileName)
+    }
+
+    /** 读取 App 内置的制作手册全文（assets/theme_manual.md） */
+    fun readManual(context: Context): String = try {
+        context.assets.open("theme_manual.md").bufferedReader().use { it.readText() }
+    } catch (_: Exception) {
+        "（手册内容暂不可用）"
     }
 
     /** 删除主题文件 */

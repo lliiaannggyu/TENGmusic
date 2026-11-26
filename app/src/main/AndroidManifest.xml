@@ -13,6 +13,11 @@
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
 
+    <!-- Android 11+ 隐式跳转商店授权/更新/反馈页所需的应用可见性声明 -->
+    <queries>
+        <package android:name="com.tengwear.tengstore" />
+    </queries>
+
     <!-- 媒体播放前台服务（带通知/系统控制） -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
