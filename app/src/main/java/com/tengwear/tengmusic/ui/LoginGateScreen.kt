@@ -101,7 +101,8 @@ fun LoginGateScreen(onDone: () -> Unit) {
                         Toast.makeText(ctx, "登录成功：$email", Toast.LENGTH_SHORT).show()
                         onDone()
                     } else {
-                        Toast.makeText(ctx, "授权码无效，请重新在商店授权", Toast.LENGTH_LONG).show()
+                        // 显示具体失败原因（v1.72），不再笼统提示「无效」
+                        Toast.makeText(ctx, StoreAuth.diagnose(ctx, code), Toast.LENGTH_LONG).show()
                     }
                 },
                 modifier = Modifier.fillMaxWidth(),

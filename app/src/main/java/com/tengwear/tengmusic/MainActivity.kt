@@ -109,8 +109,11 @@ class MainActivity : ComponentActivity() {
     /**
      * 从商店返回时（窗口重新获焦）自动尝试读取剪贴板授权码完成绑定：
      * 无论是登录引导页还是主界面内点「需登录」跳转商店，返回后都能一次性绑定。
-     * 检测到有效授权码即绑定并提示；无效则静默（交由用户手动点按）。
+     * 检测到有效授权码即绑定并提示；无效时若剪贴板确实是授权码，
+     * 显示一次具体失败原因（同一枚码不重复提示，v1.72）。
      */
+    private var lastFailedClipboardCode: String? = null
+
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (!hasFocus || stage == 0 || !eulaAgreed) return
@@ -128,6 +131,9 @@ class MainActivity : ComponentActivity() {
                     startAppServices()
                 }
                 Toast.makeText(this, "登录成功：$email", Toast.LENGTH_SHORT).show()
+            } else if (StoreAuth.looksLikeGrantCode(code) && code != lastFailedClipboardCode) {
+                lastFailedClipboardCode = code
+                Toast.makeText(this, StoreAuth.diagnose(this, code), Toast.LENGTH_LONG).show()
             }
         }
     }

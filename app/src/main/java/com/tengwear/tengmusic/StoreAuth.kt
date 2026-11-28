@@ -149,6 +149,15 @@ object StoreAuth {
     }
 
     /**
+     * 剪贴板内容是否「看起来是一枚授权码」：能解密且明文是 TENC-GRANT 开头。
+     * 用于自动绑定失败时决定是否提示（避免把无关剪贴板内容当授权码报错）。
+     */
+    fun looksLikeGrantCode(code: String): Boolean {
+        val plain = decryptText(code.replace(Regex("\\s+"), ""), LOG_CODEBOOK)
+        return plain?.startsWith("TENC-GRANT") == true
+    }
+
+    /**
      * 授权码校验规则（离线，不联网）：
      *  - 解密前剥离所有空白（复制粘贴容错）；应用名匹配不区分大小写；
      *  - time 距今 ≤ 30 分钟（有效期，防旧码流通）；
@@ -168,14 +177,18 @@ object StoreAuth {
         Regex("d=([^\\s]+)").find(plain)?.groupValues?.get(1)?.let { dev ->
             if (dev != deviceId(context)) return null
         }
-        // 防重放：码内 n 必须与本应用发起的 pending nonce 一致且未过期（无 n 字段放行）
+        // 防重放：仅当本应用发起过授权请求（存在 pending nonce）时才校验；
+        // 校验通过才消费（一次性）；失败不清空，避免一次意外失败烧掉 nonce
+        // 导致之后同一枚有效码永远校验不过（v1.72 修复）。
         Regex("n=([^\\s]+)").find(plain)?.groupValues?.get(1)?.let { n ->
             val prefs = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
             val pending = prefs.getString(KEY_PENDING_NONCE, null)
-            val at = prefs.getLong(KEY_PENDING_AT, 0L)
-            val valid = pending == n && System.currentTimeMillis() - at <= NONCE_WINDOW_MS
-            prefs.edit().remove(KEY_PENDING_NONCE).remove(KEY_PENDING_AT).apply()
-            if (!valid) return null
+            if (pending != null) {
+                val at = prefs.getLong(KEY_PENDING_AT, 0L)
+                val valid = pending == n && System.currentTimeMillis() - at <= NONCE_WINDOW_MS
+                if (!valid) return null
+                prefs.edit().remove(KEY_PENDING_NONCE).remove(KEY_PENDING_AT).apply()
+            }
         }
         val email = Regex("email=([^\\s]+)").find(plain)?.groupValues?.get(1)
         return email?.takeIf { it.contains("@") }
@@ -206,9 +219,13 @@ object StoreAuth {
         Regex("n=([^\\s]+)").find(plain)?.groupValues?.get(1)?.let { n ->
             val prefs = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
             val pending = prefs.getString(KEY_PENDING_NONCE, null)
-            val at = prefs.getLong(KEY_PENDING_AT, 0L)
-            if (pending != n || System.currentTimeMillis() - at > NONCE_WINDOW_MS) {
-                return "授权请求不符：该码不是本应用最近10分钟内发起的授权签发的，请从本应用重新发起授权"
+            // 未发起过授权请求时不判 nonce 失败（兼容从别处获得的合法码）
+            if (pending != null) {
+                val at = prefs.getLong(KEY_PENDING_AT, 0L)
+                if (pending != n || System.currentTimeMillis() - at > NONCE_WINDOW_MS) {
+                    return "授权请求不符：该码与本应用当前待处理的授权请求不一致" +
+                        "（可能已消费或超时），请从本应用重新发起授权"
+                }
             }
         }
         val email = Regex("email=([^\\s]+)").find(plain)?.groupValues?.get(1)
