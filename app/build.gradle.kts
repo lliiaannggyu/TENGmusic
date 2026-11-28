@@ -12,8 +12,8 @@ android {
         applicationId = "com.tengwear.tengmusic"
         minSdk = 25          // Android 7.1：Wear OS 手表与普通安卓手机均可安装
         targetSdk = 36
-        versionCode = 69
-        versionName = "1.69"
+        versionCode = 70
+        versionName = "1.70"
     }
 
     buildFeatures {

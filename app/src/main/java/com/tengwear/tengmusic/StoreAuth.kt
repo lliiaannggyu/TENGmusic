@@ -94,14 +94,37 @@ object StoreAuth {
     /**
      * 校验剪贴板中的授权码是否为商店签发给本 App 的有效授权。
      * 成功返回其中携带的邮箱，失败返回 null。全程离线，不联网。
+     *
+     * 容错：解码前剥离所有空白字符（复制粘贴可能引入换行/空格）；
+     * 应用名匹配不区分大小写（商店授权中心手动输入可能大小写不一）。
      */
     fun verifyGrant(code: String): String? {
-        val plain = decryptText(code, LOG_CODEBOOK) ?: return null
+        val plain = decryptText(code.replace(Regex("\\s+"), ""), LOG_CODEBOOK) ?: return null
         // 明文：TENC-GRANT app=TENGMUSIC email=<...> time=<...>
         if (!plain.startsWith("TENC-GRANT")) return null
-        if (!plain.contains("app=$APP_NAME")) return null
+        if (!Regex("app=$APP_NAME", RegexOption.IGNORE_CASE).containsMatchIn(plain)) return null
         val email = Regex("email=([^\\s]+)").find(plain)?.groupValues?.get(1)
         return email?.takeIf { it.contains("@") }
+    }
+
+    /**
+     * 诊断一枚授权码失败的具体原因（v1.70）：用于失败时给用户精确提示，
+     * 替代笼统的「无效或过期」。本 App 不做时间校验，不存在「过期」。
+     */
+    fun diagnose(code: String): String {
+        val clean = code.replace(Regex("\\s+"), "")
+        val plain = decryptText(clean, LOG_CODEBOOK)
+            ?: return "解密失败：授权码内容损坏，或商店版本与密码本不一致"
+        if (!plain.startsWith("TENC-GRANT")) return "格式错误：这段内容不是 TENC-GRANT 授权码"
+        val app = Regex("app=([^\\s]+)").find(plain)?.groupValues?.get(1)
+        if (app == null || !app.equals(APP_NAME, ignoreCase = true)) {
+            return "应用名不匹配：该授权码签发给了「${app ?: "?"}」，本应用要求「$APP_NAME」。请到商店授权时应用名填 $APP_NAME"
+        }
+        val email = Regex("email=([^\\s]+)").find(plain)?.groupValues?.get(1)
+        if (email == null || !email.contains("@")) {
+            return "邮箱缺失：商店未绑定开发者邮箱就签发了授权码"
+        }
+        return "OK"
     }
 
     /** 校验并绑定。成功返回邮箱，失败返回 null。 */

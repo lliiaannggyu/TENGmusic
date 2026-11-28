@@ -1707,7 +1707,9 @@ private fun AuthCodeInputOverlay(
                                     toast("登录成功：$email")
                                     onBound()
                                 } else {
-                                    tip = "授权码无效或已过期"; toast("授权码无效或已过期")
+                                    // 精确诊断失败原因（v1.70），替代笼统的「无效或过期」
+                                    val reason = StoreAuth.diagnose(code)
+                                    tip = reason; toast(reason)
                                 }
                             }
                         },
