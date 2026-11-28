@@ -1708,7 +1708,7 @@ private fun AuthCodeInputOverlay(
                                     onBound()
                                 } else {
                                     // 精确诊断失败原因（v1.70），替代笼统的「无效或过期」
-                                    val reason = StoreAuth.diagnose(code)
+                                    val reason = StoreAuth.diagnose(ctx, code)
                                     tip = reason; toast(reason)
                                 }
                             }

@@ -3,6 +3,7 @@ package com.tengwear.tengmusic
 import android.Manifest
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
@@ -66,6 +67,42 @@ class MainActivity : ComponentActivity() {
                 )
                 else -> WearMusicApp(viewModel())
             }
+        }
+
+        // 冷启动回调：商店签发授权后深链直传（tengmusic://auth/callback?code=...）
+        handleAuthCallback(intent)
+    }
+
+    /** 热启动回调：应用已在前台/后台时商店回跳 */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleAuthCallback(intent)
+    }
+
+    /**
+     * 处理商店授权回调：校验授权码（含时间窗/设备绑定/nonce）并完成绑定。
+     * 成功即推进登录流程并提示；失败给出精确原因（v2 协议诊断）。
+     */
+    private fun handleAuthCallback(intent: Intent?) {
+        val data = intent?.data ?: return
+        if (data.scheme != "tengmusic") return
+        val email = StoreAuth.handleCallback(applicationContext, data)
+        if (email != null) {
+            getSharedPreferences("user_prefs", MODE_PRIVATE)
+                .edit().putBoolean("login_done", true).apply()
+            loginDone = true
+            if (stage == 1) {
+                stage = 2
+                startAppServices()
+            }
+            Toast.makeText(this, "登录成功：$email", Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(
+                this,
+                StoreAuth.diagnose(applicationContext, data.getQueryParameter("code") ?: ""),
+                Toast.LENGTH_LONG,
+            ).show()
         }
     }
 

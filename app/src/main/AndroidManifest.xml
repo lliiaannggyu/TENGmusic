@@ -56,6 +56,13 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- TENC 商店通用授权协议 v2：签发后深链回调直传授权码 -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="tengmusic" android:host="auth" />
+            </intent-filter>
         </activity>
     </application>
 </manifest>
